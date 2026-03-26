@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from pr_agents.agent.intents import AgentIntentParser
 from pr_agents.application.tasks import TaskApplicationService
 from pr_agents.infrastructure import AgentSessionRepository
 from pr_agents.models import (
+    AgentAction,
+    AgentEntry,
     AgentMessage,
     AgentSessionResponse,
     AgentUserMessageRequest,
@@ -23,10 +26,12 @@ class AgentSessionService:
         session_repository: AgentSessionRepository,
         task_service: TaskApplicationService,
         demo_data_path: str,
+        intent_parser: AgentIntentParser | None = None,
     ) -> None:
         self.session_repository = session_repository
         self.task_service = task_service
         self.demo_data_path = Path(demo_data_path)
+        self.intent_parser = intent_parser or AgentIntentParser()
 
     def create_session(self) -> CreateAgentSessionResponse:
         session_id = f"session-{uuid4().hex[:8]}"
@@ -56,43 +61,41 @@ class AgentSessionService:
             request.content,
         )
 
-        if self._is_report_follow_up(request.content):
+        intent = self.intent_parser.parse(request.content)
+
+        if intent.action == AgentAction.SHOW_REPORT:
             self._append_report_follow_up(session_id)
             return self.get_session(session_id)
-
-        use_database = self._wants_database(request.content)
-        business_code = self._extract_business_code(request.content)
-        objective = self._build_objective(request.content, business_code)
 
         self.session_repository.add_message(
             session_id,
             MessageRole.ASSISTANT,
             MessageType.PLAN,
             (
-                f"I will use {'database' if use_database else 'file'} analysis for {business_code}, "
-                "generate a scientific plot, and return a report."
+                f"I will use {'database' if intent.entry == AgentEntry.DATABASE else 'file'} analysis "
+                f"for {intent.business_code}, generate a {intent.chart_type}, and return a report."
             ),
-            metadata={"business_code": business_code, "entry": "database" if use_database else "file"},
+            metadata={"business_code": intent.business_code, "entry": intent.entry.value},
         )
 
-        tool_name = "run_db_analysis" if use_database else "run_file_analysis"
+        tool_name = "run_db_analysis" if intent.entry == AgentEntry.DATABASE else "run_file_analysis"
         self.session_repository.add_message(
             session_id,
             MessageRole.TOOL,
             MessageType.TOOL_CALL,
             tool_name,
-            metadata={"business_code": business_code},
+            metadata={"business_code": intent.business_code},
         )
 
-        if use_database:
+        if intent.entry == AgentEntry.DATABASE:
             task_response = self.task_service.submit_db_analysis(
                 DatabaseAnalysisRequest(
-                    business_code=business_code,
-                    objective=objective,
+                    business_code=intent.business_code,
+                    objective=intent.objective,
                     query_name="demo_query",
                     sql="select * from cleaned_demo_data",
-                    source_profile={"source_pattern": "shared_file", "data_version": "demo-v1"},
-                    chart_profile={"chart_type": "scientific_plot"},
+                    source_profile={"source_pattern": intent.source_pattern.value, "data_version": "demo-v1"},
+                    chart_profile={"chart_type": intent.chart_type},
                     report_profile={"template": "demo-template"},
                     session_id=session_id,
                 )
@@ -100,12 +103,12 @@ class AgentSessionService:
         else:
             task_response = self.task_service.submit_file_analysis(
                 FileAnalysisRequest(
-                    business_code=business_code,
-                    objective=objective,
+                    business_code=intent.business_code,
+                    objective=intent.objective,
                     file_name=self.demo_data_path.name,
                     content=self.demo_data_path.read_text(encoding="utf-8"),
-                    source_profile={"source_pattern": "per_business_file", "data_version": "demo-v1"},
-                    chart_profile={"chart_type": "scientific_plot"},
+                    source_profile={"source_pattern": intent.source_pattern.value, "data_version": "demo-v1"},
+                    chart_profile={"chart_type": intent.chart_type},
                     report_profile={"template": "demo-template"},
                     session_id=session_id,
                 )
@@ -145,7 +148,7 @@ class AgentSessionService:
             MessageRole.ASSISTANT,
             MessageType.CHAT,
             (
-                f"Completed {business_code}. "
+                f"Completed {intent.business_code}. "
                 f"Chart type: {result.chart.chart_type if result and result.chart else 'n/a'}. "
                 f"Report summary: {result.report.summary if result and result.report else 'n/a'}.\n\n"
                 f"{report_text}"
@@ -153,7 +156,7 @@ class AgentSessionService:
             metadata={
                 "task_id": task_response.task_id,
                 "report_artifact_id": report_artifact_id,
-                "business_code": business_code,
+                "business_code": intent.business_code,
             },
         )
         return self.get_session(session_id)
@@ -202,34 +205,3 @@ class AgentSessionService:
             report_text,
             metadata={"task_id": latest_task.task_id, "report_artifact_id": report_artifact.artifact_id},
         )
-
-    @staticmethod
-    def _extract_business_code(content: str) -> str:
-        upper = content.upper()
-        if "A_DEMO" in upper:
-            return "A_DEMO"
-        if "B001" in upper:
-            return "B001"
-        return "A_DEMO"
-
-    @staticmethod
-    def _wants_database(content: str) -> bool:
-        normalized = content.lower()
-        return "database" in normalized or "数据库" in content
-
-    @staticmethod
-    def _is_report_follow_up(content: str) -> bool:
-        normalized = content.lower()
-        return (
-            "show me the report again" in normalized
-            or "show the report again" in normalized
-            or "report again" in normalized
-            or "再看报告" in content
-            or "重新看报告" in content
-        )
-
-    @staticmethod
-    def _build_objective(content: str, business_code: str) -> str:
-        if content.strip():
-            return content.strip()
-        return f"Generate a scientific plot report for {business_code}"

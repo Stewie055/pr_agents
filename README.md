@@ -59,6 +59,8 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 - 右侧是聊天消息流，输入框固定在底部
 - 点击 `Run A_DEMO`
 - 页面会展示 Agent 计划、工具调用、任务结果和报告正文，但过程信息以次级执行卡片呈现
+- 页面刷新后会优先恢复上一次活动会话
+- 最近任务的结果快照会持久化到 SQLite，服务重启后仍可查询
 
 如果需要调试底层接口，再访问：
 

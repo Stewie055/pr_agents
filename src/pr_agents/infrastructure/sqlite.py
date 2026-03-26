@@ -16,6 +16,7 @@ from pr_agents.models import (
     SessionRecord,
     TaskRecord,
     TaskStatus,
+    WorkflowResult,
 )
 
 
@@ -79,6 +80,13 @@ class SQLiteRepository:
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS task_results (
+                    task_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
                 """
             )
@@ -178,6 +186,28 @@ class TaskRepository(SQLiteRepository):
                 (session_id,),
             ).fetchall()
         return [self._task_from_row(row) for row in rows]
+
+    def save_workflow_result(self, task_id: str, result: WorkflowResult) -> None:
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_results(task_id, payload, updated_at)
+                VALUES(?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at
+                """,
+                (task_id, result.model_dump_json(), now),
+            )
+
+    def load_workflow_result(self, task_id: str) -> WorkflowResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM task_results WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return WorkflowResult.model_validate_json(row["payload"])
 
     @staticmethod
     def _task_from_row(row: sqlite3.Row) -> TaskRecord:

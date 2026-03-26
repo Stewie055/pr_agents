@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from pr_agents.api import create_api_app
+from pr_agents.agent.intents import AgentIntentParser
 from pr_agents.agent import AgentDependencies, AnalysisOrchestrator
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.infrastructure import ArtifactStore
@@ -39,6 +40,7 @@ def build_components(
         session_repository=AgentSessionRepository(settings.sqlite_path),
         task_service=task_service,
         demo_data_path="examples/demo_a.csv",
+        intent_parser=AgentIntentParser(),
     )
     return WebUIFacade(orchestrator), task_service, agent_session_service
 

@@ -132,7 +132,7 @@ class TaskApplicationService:
         return TaskDetailResponse(
             task=task,
             artifacts=self.artifact_repository.list_task_artifacts(task_id),
-            result=self._results.get(task_id),
+            result=self._results.get(task_id) or self.task_repository.load_workflow_result(task_id),
         )
 
     def list_session_tasks(self, session_id: str) -> list[TaskRecord]:
@@ -162,6 +162,7 @@ class TaskApplicationService:
 
     def _finalize_task(self, task_id: str, session_id: str, result: WorkflowResult) -> TaskResponse:
         self._results[task_id] = result
+        self.task_repository.save_workflow_result(task_id, result)
         for artifact in result.artifacts:
             self._register_artifact(task_id, artifact)
         status = TaskStatus.SUCCEEDED if result.ok else TaskStatus.FAILED

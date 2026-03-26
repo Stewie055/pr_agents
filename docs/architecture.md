@@ -40,3 +40,4 @@
 - A 类“单业务单文件”和 B 类“多业务共享文件”不拆成两套 API，只通过 `business_code` 和 `source_profile` 区分。
 - 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。
 - 用户 Demo 路径采用聊天式 Agent 会话：用户消息 -> Agent 计划 -> Tool 调用 -> 任务结果 -> 报告内容。
+- 当前 Agent 会话层已抽出独立意图解析器，并将任务结果快照持久化到 SQLite 以支持重启恢复。

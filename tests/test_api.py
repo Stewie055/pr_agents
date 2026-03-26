@@ -261,3 +261,36 @@ def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
 
     assert report_response.status_code == 200
     assert "Analysis completed" in report_response.text
+
+
+def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> None:
+    settings = Settings(
+        artifact_base_dir=str(tmp_path / "artifacts"),
+        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+    )
+    app = build_api_app(settings)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/tasks/file-analysis",
+        json={
+            "business_code": "A_DEMO",
+            "objective": "Generate a scientific plot report for the demo dataset",
+            "file_name": "demo_a.csv",
+            "content": "temperature,pressure\n21.5,101.2\n22.1,101.5\n22.8,101.7\n",
+            "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"},
+            "chart_profile": {"chart_type": "scientific_plot"},
+            "report_profile": {"template": "demo-template"},
+        },
+    )
+    task_id = response.json()["task_id"]
+
+    rebuilt_app = build_api_app(settings)
+    rebuilt_client = TestClient(rebuilt_app)
+    task_detail = rebuilt_client.get(f"/api/v1/tasks/{task_id}")
+
+    assert task_detail.status_code == 200
+    payload = task_detail.json()
+    assert payload["result"] is not None
+    assert payload["result"]["report"] is not None
+    assert payload["result"]["chart"]["chart_type"] == "scientific_plot"

@@ -45,6 +45,16 @@ class MessageType(str, Enum):
     ERROR = "error"
 
 
+class AgentAction(str, Enum):
+    ANALYZE = "analyze"
+    SHOW_REPORT = "show_report"
+
+
+class AgentEntry(str, Enum):
+    FILE = "file"
+    DATABASE = "database"
+
+
 class TaskContext(BaseModel):
     session_id: str = Field(default_factory=lambda: f"session-{uuid4().hex[:8]}")
     task_id: str = Field(default_factory=lambda: f"task-{uuid4().hex[:8]}")
@@ -276,3 +286,12 @@ class CreateAgentSessionResponse(BaseModel):
 
 class AgentUserMessageRequest(BaseModel):
     content: str
+
+
+class AgentIntent(BaseModel):
+    action: AgentAction
+    business_code: str
+    entry: AgentEntry
+    objective: str
+    chart_type: str = "scientific_plot"
+    source_pattern: SourcePattern = SourcePattern.PER_BUSINESS_FILE

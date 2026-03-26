@@ -383,6 +383,7 @@ def render_agent_demo_page() -> str:
   </div>
   <script>
     const STORAGE_KEY = 'pr_agents_agent_sessions';
+    const ACTIVE_SESSION_KEY = 'pr_agents_active_session';
     let sessionId = null;
     let sessions = [];
 
@@ -408,6 +409,12 @@ def render_agent_demo_page() -> str:
 
     function saveStoredSessions() {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    }
+
+    function saveActiveSession() {
+      if (sessionId) {
+        window.localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+      }
     }
 
     function upsertSessionMeta(id, title) {
@@ -437,6 +444,7 @@ def render_agent_demo_page() -> str:
       Array.from(container.querySelectorAll('[data-session-id]')).forEach(function (button) {
         button.addEventListener('click', async function () {
           sessionId = this.getAttribute('data-session-id');
+          saveActiveSession();
           document.getElementById('status').textContent = 'Loading ' + sessionId + '...';
           renderSessionList();
           await refreshSession();
@@ -492,6 +500,7 @@ def render_agent_demo_page() -> str:
       const response = await fetch('/api/v1/agent/sessions', { method: 'POST' });
       const payload = await response.json();
       sessionId = payload.session_id;
+      saveActiveSession();
       upsertSessionMeta(sessionId, 'New conversation');
       document.getElementById('session-title').textContent = sessionId;
       status.textContent = 'Session ready.';
@@ -503,6 +512,8 @@ def render_agent_demo_page() -> str:
       const response = await fetch('/api/v1/agent/sessions/' + sessionId);
       const payload = await response.json();
       const title = deriveTitle(payload.messages);
+      sessionId = payload.session_id;
+      saveActiveSession();
       upsertSessionMeta(sessionId, title);
       document.getElementById('session-title').textContent = title + ' · ' + sessionId;
       renderMessages(payload.messages);
@@ -571,7 +582,16 @@ def render_agent_demo_page() -> str:
 
     loadStoredSessions();
     renderSessionList();
-    createSession();
+    const rememberedSession = window.localStorage.getItem(ACTIVE_SESSION_KEY);
+    if (rememberedSession) {
+      sessionId = rememberedSession;
+      renderSessionList();
+      refreshSession().catch(function () {
+        createSession();
+      });
+    } else {
+      createSession();
+    }
   </script>
 </body>
 </html>"""
