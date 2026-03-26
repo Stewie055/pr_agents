@@ -466,6 +466,9 @@ def render_agent_demo_page(intent_mode: str) -> str:
     let sessionId = null;
     let sessions = [];
     let activeStream = null;
+    let sessionData = { messages: [], runs: [] };
+    let liveRun = null;
+    let liveAssistant = null;
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>"]/g, function (ch) {
@@ -567,16 +570,50 @@ def render_agent_demo_page(intent_mode: str) -> str:
       '</details>';
     }
 
-    function renderMessages(messages, runs) {
+    function renderLiveRun(run) {
+      if (!run || !run.steps || !run.steps.length) {
+        return '';
+      }
+      const steps = run.steps.map(function (step) {
+        const observation = step.error_summary && Object.keys(step.error_summary).length
+          ? (step.error_summary.message || JSON.stringify(step.error_summary))
+          : (step.observation_summary.summary || step.observation_summary.report_summary || step.observation_summary.task_status || '');
+        return '<div class="step-item">' +
+          '<div class="step-head"><span class="step-title">' + escapeHtml(step.title) + '</span><span class="step-status">' + escapeHtml(step.status) + '</span></div>' +
+          '<div class="step-body">' + escapeHtml(observation || step.tool_name) + '</div>' +
+        '</div>';
+      }).join('');
+      return '<div class="message-row tool">' +
+        '<section class="run-card live-run-card" data-live-run="true">' +
+          '<div class="run-head"><span class="run-title">Task in progress</span><span class="run-status">' + escapeHtml(run.status || 'running') + '</span></div>' +
+          '<div class="run-summary">' + escapeHtml(run.goal || 'Running agent tools...') + '</div>' +
+          '<div class="step-list">' + steps + '</div>' +
+        '</section>' +
+      '</div>';
+    }
+
+    function renderMessages(messages, runs, pendingAssistant, pendingRun) {
       const container = document.getElementById('messages');
-      if (!messages.length) {
+      const visibleMessages = (messages || []).filter(function (message) {
+        return !['plan', 'tool_call', 'tool_result'].includes(message.message_type);
+      }).slice();
+      if (pendingAssistant) {
+        visibleMessages.push({
+          role: 'assistant',
+          message_type: 'chat',
+          content: pendingAssistant.content || '',
+          metadata: { run_id: pendingAssistant.run_id }
+        });
+      }
+      if (!visibleMessages.length) {
         container.innerHTML = '<div class="empty">Start with <strong>Run File Demo</strong>, <strong>Run DB Demo</strong>, or ask for the latest report.</div>';
         return;
       }
       const runMap = buildRunMap(runs);
-      container.innerHTML = messages.filter(function (message) {
-        return !['plan', 'tool_call', 'tool_result'].includes(message.message_type);
-      }).map(function (message) {
+      if (pendingRun && pendingRun.run_id) {
+        runMap[pendingRun.run_id] = pendingRun;
+      }
+      const messageHtml = visibleMessages.map(function (message) {
         const roleLabel = message.role === 'user' ? 'You' : 'Agent';
         const runDetails = message.role === 'assistant' && message.metadata && message.metadata.run_id
           ? renderRunDetails(runMap[message.metadata.run_id], message)
@@ -588,8 +625,27 @@ def render_agent_demo_page(intent_mode: str) -> str:
           '</article>' + runDetails +
         '</div>';
       }).join('');
+      const liveRunHtml = renderLiveRun(pendingRun);
+      container.innerHTML = messageHtml + liveRunHtml;
       const conversation = document.getElementById('conversation');
       conversation.scrollTop = conversation.scrollHeight;
+    }
+
+    function renderCurrentView() {
+      renderMessages(sessionData.messages || [], sessionData.runs || [], liveAssistant, liveRun);
+    }
+
+    function updateLiveStep(stepId, mutate) {
+      if (!liveRun || !liveRun.steps) return;
+      const step = liveRun.steps.find(function (item) { return item.step_id === stepId; });
+      if (step) mutate(step);
+    }
+
+    function ensureLiveRun(runId) {
+      if (!liveRun || liveRun.run_id !== runId) {
+        liveRun = { run_id: runId, goal: '', status: 'running', summary: '', metadata: {}, steps: [] };
+      }
+      return liveRun;
     }
 
     function deriveTitle(messages) {
@@ -614,12 +670,13 @@ def render_agent_demo_page(intent_mode: str) -> str:
       if (!sessionId) return;
       const response = await fetch('/api/v1/agent/sessions/' + sessionId);
       const payload = await response.json();
+      sessionData = payload;
       const title = deriveTitle(payload.messages);
       sessionId = payload.session_id;
       saveActiveSession();
       upsertSessionMeta(sessionId, title);
       document.getElementById('session-title').textContent = title + ' · ' + sessionId;
-      renderMessages(payload.messages, payload.runs || []);
+      renderCurrentView();
       document.getElementById('status').textContent = 'Ready.';
     }
 
@@ -634,6 +691,15 @@ def render_agent_demo_page(intent_mode: str) -> str:
         activeStream.close();
         activeStream = null;
       }
+      liveRun = null;
+      liveAssistant = null;
+      sessionData.messages = (sessionData.messages || []).concat([{
+        role: 'user',
+        message_type: 'chat',
+        content: trimmed,
+        metadata: {}
+      }]);
+      renderCurrentView();
       document.getElementById('status').textContent = 'Queued...';
       document.getElementById('send-message').disabled = true;
       const response = await fetch('/api/v1/agent/sessions/' + sessionId + '/messages', {
@@ -642,7 +708,6 @@ def render_agent_demo_page(intent_mode: str) -> str:
         body: JSON.stringify({ content: trimmed })
       });
       const payload = await response.json();
-      await refreshSession();
       prompt.value = '';
       prompt.focus();
       const stream = new EventSource(payload.stream_url);
@@ -655,54 +720,125 @@ def render_agent_demo_page(intent_mode: str) -> str:
         if (activeStream === stream) activeStream = null;
       }
 
-      async function handleEvent(statusText) {
+      function handleEvent(statusText) {
         document.getElementById('status').textContent = statusText;
-        await refreshSession();
+        renderCurrentView();
       }
 
-      stream.addEventListener('run_started', async function () {
-        await handleEvent('Queued...');
+      stream.addEventListener('run_started', function (event) {
+        const payload = JSON.parse(event.data);
+        liveRun = {
+          run_id: payload.run_id,
+          goal: payload.data.goal,
+          status: 'running',
+          summary: '',
+          metadata: {},
+          steps: []
+        };
+        handleEvent('Starting run...');
       });
-      stream.addEventListener('routing_started', async function () {
-        await handleEvent('Routing...');
+      stream.addEventListener('step_started', function (event) {
+        const payload = JSON.parse(event.data);
+        updateLiveStep(payload.data.step_id, function (step) {
+          step.status = 'running';
+        });
+        handleEvent('Running step...');
       });
-      stream.addEventListener('fast_path_selected', async function () {
-        await handleEvent('Fast path selected...');
+      stream.addEventListener('tool_called', function (event) {
+        const payload = JSON.parse(event.data);
+        const run = ensureLiveRun(payload.run_id);
+        if (payload.data.step_id) {
+          let existing = run.steps.find(function (step) { return step.step_id === payload.data.step_id; });
+          if (!existing) {
+            existing = {
+              step_id: payload.data.step_id,
+              step_index: run.steps.length,
+              title: payload.data.tool_name,
+              tool_name: payload.data.tool_name,
+              status: 'running',
+              inputs_summary: payload.data.inputs || {},
+              observation_summary: {},
+              error_summary: {}
+            };
+            run.steps.push(existing);
+          }
+          existing.status = 'running';
+          existing.observation_summary = { summary: 'Calling ' + (payload.data.tool_name || existing.tool_name) + '...' };
+        } else {
+          run.summary = 'Calling ' + payload.data.tool_name + '...';
+        }
+        handleEvent('Running tool...');
       });
-      stream.addEventListener('planning_started', async function () {
-        await handleEvent('Planning...');
+      stream.addEventListener('tool_result', function (event) {
+        const payload = JSON.parse(event.data);
+        if (payload.data.step_id) {
+          updateLiveStep(payload.data.step_id, function (step) {
+            step.observation_summary = {
+              task_status: payload.data.status,
+              chart_type: payload.data.chart_type
+            };
+          });
+        }
+        handleEvent('Tool returned.');
       });
-      stream.addEventListener('chat_reply', async function () {
-        await handleEvent('Reply received.');
+      stream.addEventListener('step_completed', function (event) {
+        const payload = JSON.parse(event.data);
+        updateLiveStep(payload.data.step_id, function (step) {
+          step.status = 'succeeded';
+          step.observation_summary = {
+            summary: payload.data.summary || step.observation_summary && step.observation_summary.summary || '',
+            task_id: payload.data.task_id
+          };
+        });
+        handleEvent('Step completed.');
       });
-      stream.addEventListener('plan_created', async function () {
-        await handleEvent('Plan created.');
+      stream.addEventListener('step_failed', function (event) {
+        const payload = JSON.parse(event.data);
+        updateLiveStep(payload.data.step_id, function (step) {
+          step.status = 'failed';
+          step.error_summary = { message: payload.data.message };
+        });
+        handleEvent('Step failed.');
       });
-      stream.addEventListener('step_started', async function () {
-        await handleEvent('Running step...');
+      stream.addEventListener('assistant_started', function (event) {
+        const payload = JSON.parse(event.data);
+        liveAssistant = { run_id: payload.run_id, content: '', buffered: '' };
+        handleEvent('Responding...');
       });
-      stream.addEventListener('tool_called', async function () {
-        await handleEvent('Calling tool...');
+      stream.addEventListener('assistant_delta', function (event) {
+        const payload = JSON.parse(event.data);
+        if (!liveAssistant) {
+          liveAssistant = { run_id: payload.run_id, content: '', buffered: '' };
+        }
+        liveAssistant.buffered = (liveAssistant.buffered || '') + (payload.data.delta || '');
+        liveAssistant.content = liveAssistant.buffered;
+        handleEvent('Responding...');
       });
-      stream.addEventListener('tool_result', async function () {
-        await handleEvent('Tool returned.');
-      });
-      stream.addEventListener('step_completed', async function () {
-        await handleEvent('Step completed.');
-      });
-      stream.addEventListener('step_failed', async function () {
-        await handleEvent('Step failed.');
+      stream.addEventListener('assistant_completed', function (event) {
+        const payload = JSON.parse(event.data);
+        if (!liveAssistant) {
+          liveAssistant = { run_id: payload.run_id, content: payload.data.message || '', buffered: payload.data.message || '' };
+        } else {
+          liveAssistant.buffered = payload.data.message || liveAssistant.buffered || '';
+          liveAssistant.content = liveAssistant.buffered;
+        }
+        handleEvent('Reply received.');
       });
       stream.addEventListener('run_completed', async function () {
+        if (liveRun) liveRun.status = 'succeeded';
+        liveAssistant = null;
+        liveRun = null;
         await refreshSession();
         complete('Completed.');
       });
       stream.addEventListener('run_failed', async function () {
+        if (liveRun) liveRun.status = 'failed';
+        liveAssistant = null;
+        liveRun = null;
         await refreshSession();
         complete('Failed.');
       });
-      stream.addEventListener('session_snapshot', async function () {
-        await refreshSession();
+      stream.addEventListener('session_snapshot', function () {
       });
       stream.addEventListener('keepalive', function () {
         if (document.getElementById('send-message').disabled) {

@@ -12,18 +12,16 @@
 
 ### Agent Orchestration
 
-负责管理 session、上下文、记忆、计划、执行和事件流。当前 Agent 运行时以单一 `AgentRuntime` 为主入口，内部由以下模块组成：
+负责管理 session、上下文、记忆、执行和事件流。当前 Agent 运行时以单一 `AgentRuntime` 为主入口，内部由以下模块组成：
 
 - `AgentRuntime`
-  统一承接用户消息、上下文装配、agent 决策、tool 执行、SSE 事件和 SQLite 持久化
+  统一承接用户消息、上下文装配、单个 `PydanticAI Agent` 的决策与工具调用、SSE 事件和 SQLite 持久化
 - `ContextManager`
   从 session、message、task、artifact 和 memory 组装 `AgentContext`
 - `Memory`
   当前实现短期与中期记忆；长期知识与 RAG 作为后续扩展位，归属于 Memory
-- `PlannerAgent`
-  仅在需要规划时生成 workflow-level 结构化 plan
-- `ReactAgent`
-  作为主执行体，基于 LLM 输出结构化决策，决定直接回复还是调用某个 allowed tool
+- `Agent Tools`
+  仅向模型暴露 workflow-level tools：文件分析、数据库分析、加载最近报告、概括最近报告
 - `Event Stream`
   将 run 生命周期、步骤状态和关键 tool 结果通过 SSE 推给前端
 
@@ -60,8 +58,10 @@
   - `llm`：通过 `GLMProvider` 调用真实模型，失败自动回退到 `fake`
 - GLM 官方 API 的 HTTP 调用被隔离在独立 provider 中，`AgentSessionService` 和 `AgentRuntime` 不直接依赖供应商细节。
 - 默认模型配置为 `GLM-4.5-Air`，便于开发环境先验证自然语言理解；后续迁移到局域网环境时可只替换 provider 配置或实现。
-- 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 和子 Agent 只使用注入后的模型，不在上层散布分支。
-- `ReactAgent` 的结构化决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
-- 第一版 `PlannerAgent` 粒度固定为 workflow-level，避免把领域逻辑推进 LLM。
+- 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 只使用注入后的模型，不在上层散布分支。
+- 单个 `PydanticAI Agent` 的决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
 - 前端发送消息时采用“POST 创建 run + GET SSE 订阅”模式，而不是等待整包 JSON 响应。
-- WebUI 展示层采用“最终回复优先”的聚合策略：`plan/tool/run` 轨迹默认收敛到 assistant 回复下方的折叠详情，而不是分别平铺到消息流中。
+- WebUI 展示层采用“两阶段展示”策略：运行中先显示独立工具卡片区；完成后再把持久化的 run 轨迹收敛到 assistant 回复下方的折叠详情。
+- 当前流式协议分为两类：
+  - 工具与步骤事件流：先展示 tool / step 卡片
+  - assistant 文本流：通过 `assistant_delta` 增量输出最终回复，而不是等完整 session 再一次性刷新

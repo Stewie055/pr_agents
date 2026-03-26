@@ -22,13 +22,15 @@
 - LLM provider 必须有独立适配层，便于后续把代码迁移到局域网环境后替换为其他网关或模型。
 - LLM API key 只允许通过环境变量或本地未提交配置注入，不得写入仓库。
 - Agent 必须采用“对话优先、工具后置”的交互原则，但是否调用工具由 LLM 的结构化决策决定，不由 runtime 预先写死分支。
-- Agent Orchestration 需要以单一 `AgentRuntime` 为主入口，内部组合 `ContextManager`、`Memory`、`PlannerAgent`、`ReactAgent`。
-- 第一版 `PlannerAgent` 粒度固定为 workflow-level，不直接下钻到 Service 细步骤。
-- `ReactAgent` 负责主决策循环，并且只允许调用白名单 workflow-level tools。
+- Agent Orchestration 需要以单一 `AgentRuntime` 为主入口，内部使用单个 `PydanticAI Agent` 作为执行主体。
+- 运行时上下文必须由 `ContextManager` 和 `Memory` 提供，不允许把会话判断、业务分流、工具参数拼装散落在 session 层。
+- Agent 只允许调用白名单 workflow-level tools，不直接暴露 Service 级能力。
 - `Memory` 是 Agent Orchestration 的正式一层，当前至少包含短期和中期记忆；长期知识和 RAG 归属于 Memory 的后续扩展能力。
 - 任务型消息必须保留 run/plan/step 轨迹，并支持失败后保留轨迹停止。
 - WebUI 需要支持 SSE 流式事件，而不是等待整包执行结果。
 - 流式协议应采用“POST 创建 run + GET SSE 订阅”的方式。
+- 工具型请求应先展示工具/步骤卡片，再在流程完成后输出 assistant 回复。
+- 直接回复型请求应通过 assistant 文本流增量输出，而不是等待完整回复后一次性展示。
 - WebUI 默认应优先展示 assistant 最终回复，执行轨迹和报告正文采用折叠详情展示，避免同一轮任务重复输出。
 - 官方 demo 至少应覆盖两条主线：文件分析和数据库分析，并支持报告重看与报告摘要追问。
 - 支持 HTTP 任务提交、任务查询、会话任务查询和产物读取。

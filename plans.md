@@ -79,18 +79,18 @@
 ## 第十阶段计划与实现
 
 - 将 Agent 从“意图解析后直接调 workflow”升级为真正的任务型运行时。
-- 引入单一 `AgentRuntime` 主入口，内部组合 `ContextManager`、`Memory`、`PlannerAgent`、`ReactAgent`。
-- 让 `ReactAgent` 基于 LLM 输出结构化决策，不再由 runtime 预先写死 `chat / report / task` 分支。
-- 规划粒度固定为 workflow-level，步骤轨迹持久化到 SQLite。
+- 引入单一 `AgentRuntime` 主入口，内部使用 `ContextManager`、`Memory` 和一个 `PydanticAI Agent` 统一承接决策与工具调用。
+- 不再由 runtime 预先写死 `chat / report / task` 分支，而是让模型自行决定直接回复还是调用工具。
+- 工具粒度固定为 workflow-level，步骤轨迹持久化到 SQLite。
 - 对任务型请求返回 `runs`，包含 run 状态、步骤状态和关键 observation 摘要。
 - WebUI 改为普通聊天只显示消息，任务请求额外显示折叠的 `Task details`。
 
 ## 第十一阶段计划与实现
 
 - 将 Agent 消息发送改造成 `POST 创建 run + GET SSE 订阅` 的流式模式。
-- 新增 run 级 SSE 事件：`run_started`、`chat_reply`、`plan_created`、`step_started`、`tool_called`、`tool_result`、`step_completed`、`run_completed`、`run_failed`。
+- 新增 run 级 SSE 事件：`run_started`、`step_started`、`tool_called`、`tool_result`、`step_completed`、`assistant_started`、`assistant_delta`、`assistant_completed`、`run_completed`、`run_failed`、`session_snapshot`。
 - WebUI 发送消息后改用 `EventSource` 订阅事件，不再等待整包 JSON 才更新界面。
-- 继续以 SQLite 作为最终状态来源，SSE 只负责实时观察；前端收到事件后刷新当前 session 对齐状态。
+- 继续以 SQLite 作为最终状态来源，SSE 只负责实时观察；前端只在 run 结束时再对齐 session 快照。
 - 保留现有 `GET session`、task、artifact 查询接口作为恢复和回放入口。
 
 ## 第十二阶段计划与实现
@@ -115,11 +115,20 @@
 ## 第十四阶段计划与实现
 
 - 将 Agent Orchestration 重构为以 `AgentRuntime` 为中心的架构，不再保留旧的 intent parser 主链路。
-- 新增 `FakeLLM`、`GLMProvider`、`ContextManager`、`MemoryManager`、`PlannerAgent`、`ReactAgent`。
+- 新增 `FakeLLM`、`GLMProvider`、`ContextManager`、`MemoryManager`，并把执行收敛到单个 `PydanticAI Agent` 主链路。
 - 通过工厂在启动时注入不同 llm，实现 fake / llm 切换，而不是在上层 runtime 中散布分支。
 - `Memory` 作为正式一层，当前实现短期与中期记忆；长期知识和 RAG 作为后续扩展位，归属于 Memory，而不是单独平级模块。
-- `ReactAgent` 负责主决策循环；在需要规划时再调用 `PlannerAgent`，最终只允许调用 workflow-level tools。
+- 运行时只允许调用 workflow-level tools，不直接把 Service 级能力暴露给模型。
 - 删除旧的 `agent/intents.py`，避免旧的 parser 架构继续干扰后续业务接入。
+
+## 第十五阶段计划与实现
+
+- 将 WebUI 从“事件到达后整包刷新 session”改成真正的增量渲染。
+- 后端新增 `assistant_started`、`assistant_delta`、`assistant_completed` 事件，用于流式输出最终回复。
+- 工具型请求保持先显示 `step / tool` 卡片，再在工具完成后流式输出 assistant 回复。
+- 直接回复路径也改成 assistant 文本流，而不是等待整段内容一次性落盘后再显示。
+- 前端只在 run 完成后再对齐最终 session 快照，避免工具卡闪烁和重复渲染。
+- 实时工具流不再依赖 assistant 气泡承接，而是使用独立工具区展示，避免页面只剩 `Thinking...`。
 
 ## 下一阶段建议
 

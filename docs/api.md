@@ -64,14 +64,15 @@
 - 会展示：
   - 用户消息
   - Agent 最终回复
-  - 折叠的 `Task details`
+  - 运行中的独立工具卡片区
+  - 完成后的折叠 `Task details`
 - 页面刷新后会优先恢复最近活动 session
 - 页面顶部会显示当前 `Intent mode`
 - 普通聊天消息不会触发任务，也不会出现 tool_call
 - 任务型消息会在 session 响应中返回 `runs`，其中包含计划状态和步骤摘要
 - WebUI 不再等待整包消息执行完成，而是订阅 run 的 `SSE` 事件流
 - WebUI 默认不把 `plan`、`tool_call`、`tool_result` 直接渲染成主消息
-- 任务型 run 会聚合到 assistant 回复下方的折叠详情里；纯聊天 run 不会单独显示
+- 任务执行中会在消息流尾部显示独立工具卡片区；完成后该 run 会收敛到 assistant 回复下方的折叠详情里
 - 页面内还提供两类标准追问：
   - `Show latest report`
   - `Summarize report`
@@ -81,7 +82,7 @@
 - `fake`
   规则式模型，适合开发和业务接入阶段
 - `llm`
-  基于 GLM 官方 API provider 的结构化 Agent 决策；失败自动回退到 `fake`
+  基于 GLM 官方 API provider 的 `PydanticAI Agent` 决策；失败自动回退到 `fake`
 
 当前默认 LLM 配置约定：
 
@@ -114,7 +115,7 @@
   - `summary`
   - `steps`
 
-普通聊天只会追加 `messages`；明确任务请求才会创建 `runs` 和 `tasks`。这些行为由 `ReactAgent` 的结构化决策驱动，而不是 API 层的硬编码分流。
+普通聊天只会追加 `messages`；任务型请求才会创建 `runs` 和 `tasks`。这些行为由单一 `PydanticAI Agent` 的决策驱动，而不是 API 层的硬编码分流。
 
 当前官方 demo 推荐的两条 agent prompt：
 
@@ -126,15 +127,20 @@
 `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream` 返回 `text/event-stream`，当前事件包括：
 
 - `run_started`
-- `chat_reply`
-- `plan_created`
 - `step_started`
 - `tool_called`
 - `tool_result`
 - `step_completed`
 - `step_failed`
+- `assistant_started`
+- `assistant_delta`
+- `assistant_completed`
 - `run_completed`
 - `run_failed`
 - `session_snapshot`
 
-第一版前端在收到事件后会刷新当前 session，以同步 `messages/tasks/runs` 的最新状态。
+当前前端会直接消费这些事件：
+
+- 工具型请求先用 `step_started / tool_called / tool_result` 增量更新独立工具卡片区
+- assistant 回复通过 `assistant_started / assistant_delta / assistant_completed` 增量渲染
+- 最后再用 `run_completed / session_snapshot` 对齐持久化状态

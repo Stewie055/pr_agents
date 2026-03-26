@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from uuid import uuid4
 
@@ -77,18 +78,21 @@ class AgentSessionService:
             stream_url=f"/api/v1/agent/sessions/{session_id}/runs/{run.run_id}/stream",
         )
 
-    def stream_run_events(self, session_id: str, run_id: str):
-        yield from self.runtime.stream_run_events(session_id, run_id)
+    async def stream_run_events(self, session_id: str, run_id: str):
+        async for event in self.runtime.stream_run_events(session_id, run_id):
+            yield event
 
-    def iter_formatted_sse(self, session_id: str, run_id: str):
-        for event in self.stream_run_events(session_id, run_id):
+    async def iter_formatted_sse(self, session_id: str, run_id: str):
+        async for event in self.stream_run_events(session_id, run_id):
             yield self._format_event(event)
         yield self._format_event(self.runtime._event("keepalive", session_id, run_id, {"status": "stream_closed"}))
 
     def handle_message(self, session_id: str, request: AgentUserMessageRequest) -> AgentSessionResponse:
         start = self.start_message_run(session_id, request)
-        for _ in self.stream_run_events(session_id, start.run_id):
-            pass
+        async def _drain() -> None:
+            async for _ in self.stream_run_events(session_id, start.run_id):
+                pass
+        asyncio.run(_drain())
         return self.get_session(session_id)
 
     def read_session_artifact_content(self, session_id: str, artifact_id: str) -> str | None:

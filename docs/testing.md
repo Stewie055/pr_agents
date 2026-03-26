@@ -19,10 +19,11 @@
 - fake / llm 双模切换与 fallback 示例
 - GLM provider 请求构造与 provider 未配置 fallback 示例
 - 普通聊天不触发工具的 session 示例
-- `PlannerAgent` 与 `ReactAgent` 的 workflow-level 决策和 run/step 轨迹示例
+- 单个 `PydanticAI Agent` 的 workflow-level 工具决策和 run/step 轨迹示例
 - `MemoryManager` 的最近任务与最近报告摘要示例
 - SSE run 启动、事件流顺序和 session 最终一致性示例
-- WebUI “最终回复优先 + 折叠 Task details” 展示示例
+- `assistant_started / assistant_delta / assistant_completed` 的增量回复示例
+- WebUI “运行中独立工具卡片区 + 完成后折叠 Task details” 展示示例
 - 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
 
 ## 运行

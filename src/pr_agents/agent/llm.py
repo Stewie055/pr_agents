@@ -1,255 +1,248 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Protocol
-from urllib import request
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from uuid import uuid4
 
-from pr_agents.models import AgentDecisionAction, AgentEntry, LLMProviderName, SourcePattern
+from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-
-class AgentLLM(Protocol):
-    name: str
-
-    def is_configured(self) -> bool:
-        ...
-
-    def complete_json(self, *, system_prompt: str, user_prompt: str, model: str, timeout: float) -> str:
-        ...
+from pr_agents.models import AgentEntry, IntentMode, SourcePattern
+from pr_agents.settings import Settings
 
 
-Requester = Callable[[str, dict[str, Any], dict[str, str], float], str]
+def _detect_business_code(user_message: str) -> str:
+    upper = user_message.upper()
+    if "B001" in upper:
+        return "B001"
+    return "A_DEMO"
 
 
+def _detect_entry(user_message: str) -> str:
+    lower = user_message.lower()
+    if "database" in lower or "数据库" in user_message:
+        return AgentEntry.DATABASE.value
+    return AgentEntry.FILE.value
+
+
+def _detect_source_pattern(business_code: str) -> str:
+    if business_code == "B001":
+        return SourcePattern.SHARED_FILE.value
+    return SourcePattern.PER_BUSINESS_FILE.value
+
+
+def _is_report_request(content: str) -> bool:
+    lower = content.lower()
+    return (
+        "show me the report again" in lower
+        or "show the report again" in lower
+        or "report again" in lower
+        or "show latest report" in lower
+        or "再看报告" in content
+        or "重新看报告" in content
+    )
+
+
+def _is_report_summary_request(content: str) -> bool:
+    lower = content.lower()
+    return (
+        "summarize the report" in lower
+        or "summarise the report" in lower
+        or "report summary" in lower
+        or "key points" in lower
+        or "概括这份报告" in content
+        or "总结这份报告" in content
+        or "报告重点" in content
+    )
+
+
+def _looks_like_analysis_request(content: str) -> bool:
+    lower = content.lower()
+    markers = (
+        "a_demo",
+        "b001",
+        "database",
+        "scientific plot",
+        "report",
+        "analy",
+        "chart",
+        "plot",
+        "分析",
+        "报告",
+        "画图",
+        "绘图",
+        "数据库",
+    )
+    return any(marker in lower or marker in content for marker in markers)
+
+
+def _chat_reply(content: str) -> str:
+    normalized = content.strip().lower()
+    if normalized in {"hi", "hello", "hey", "你好", "您好", "嗨", "在吗"}:
+        return (
+            "你好。我可以帮你分析 demo 数据、生成科学绘图和报告。"
+            "你可以直接说：请用 A_DEMO 文件数据生成科学绘图和报告。"
+        )
+    if "你是谁" in content or "你能做什么" in content or "怎么用" in content or normalized == "help":
+        return (
+            "我是一个任务型分析 Agent。你可以让我跑文件分析、数据库分析、查看报告，"
+            "或者概括报告重点。"
+        )
+    return "我可以直接回复，也可以调用分析工作流。你可以试试文件 demo、数据库 demo，或者让我概括最近的报告。"
+
+
+async def _yield_text(content: str, chunk_size: int = 24) -> AsyncIterator[str]:
+    text = content or ""
+    for index in range(0, len(text), chunk_size):
+        yield text[index : index + chunk_size]
+
+
+@dataclass
 class FakeLLM:
-    name = "fake"
+    name: str = IntentMode.FAKE.value
 
-    def is_configured(self) -> bool:
-        return True
+    def build_model(self) -> FunctionModel:
+        return FunctionModel(function=self._function, stream_function=self._stream_function, model_name=self.name)
 
-    def complete_json(self, *, system_prompt: str, user_prompt: str, model: str, timeout: float) -> str:
-        del model, timeout
-        if "AGENT_DECISION" in system_prompt:
-            try:
-                payload = json.loads(user_prompt)
-                prompt = payload.get("user_message", user_prompt)
-            except json.JSONDecodeError:
-                prompt = user_prompt
-            return json.dumps(self._decision_payload(prompt), ensure_ascii=False)
-        if "AGENT_PLAN" in system_prompt:
-            payload = json.loads(user_prompt)
-            decision = payload.get("decision", payload)
-            return json.dumps(self._plan_payload(decision), ensure_ascii=False)
-        raise ValueError("unsupported fake llm prompt type")
+    async def _function(self, messages, _agent_info) -> ModelResponse:
+        decision = self._decide(messages)
+        if decision["kind"] == "tool":
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=decision["tool_name"],
+                        args=json.dumps(decision["tool_args"], ensure_ascii=False),
+                        tool_call_id=decision["tool_call_id"],
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content=decision["text"])])
 
-    def _decision_payload(self, user_prompt: str) -> dict[str, Any]:
-        normalized = user_prompt.strip()
-        upper = normalized.upper()
-        lower = normalized.lower()
-        business_code = "B001" if "B001" in upper else "A_DEMO"
-        entry = AgentEntry.DATABASE.value if "database" in lower or "数据库" in normalized else AgentEntry.FILE.value
-
-        if self._is_report_summary_request(normalized):
-            return {
-                "action": AgentDecisionAction.CALL_TOOL.value,
-                "tool_name": "summarize_report",
-                "tool_input": {"business_code": business_code},
-                "response": "",
-                "thought_summary": "Use the latest report and summarize its key points.",
+    async def _stream_function(self, messages, _agent_info) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        decision = self._decide(messages)
+        if decision["kind"] == "tool":
+            yield {
+                0: DeltaToolCall(
+                    name=decision["tool_name"],
+                    json_args=json.dumps(decision["tool_args"], ensure_ascii=False),
+                    tool_call_id=decision["tool_call_id"],
+                )
             }
-        if self._is_report_request(normalized):
-            return {
-                "action": AgentDecisionAction.CALL_TOOL.value,
-                "tool_name": "load_latest_report",
-                "tool_input": {"business_code": business_code},
-                "response": "",
-                "thought_summary": "Load the most recent report from session history.",
-            }
-        if self._is_chat(normalized, lower):
-            return {
-                "action": AgentDecisionAction.RESPOND.value,
-                "tool_name": None,
-                "tool_input": {},
-                "response": self._chat_reply(normalized),
-                "thought_summary": "Respond directly without tools.",
-            }
-        if self._looks_like_analysis_request(normalized, lower):
-            tool_name = "run_db_analysis_workflow" if entry == AgentEntry.DATABASE.value else "run_file_analysis_workflow"
-            return {
-                "action": AgentDecisionAction.CALL_TOOL.value,
-                "tool_name": tool_name,
-                "tool_input": {
-                    "business_code": business_code,
-                    "entry": entry,
-                    "objective": normalized or "Generate analysis results",
-                    "chart_type": "scientific_plot",
-                    "source_pattern": self._detect_source_pattern(business_code),
-                },
-                "response": "",
-                "thought_summary": "Run the appropriate analysis workflow before replying.",
-            }
-        return {
-            "action": AgentDecisionAction.RESPOND.value,
-            "tool_name": None,
-            "tool_input": {},
-            "response": self._chat_reply(normalized),
-            "thought_summary": "Reply directly because no tool is required.",
-        }
+            return
+        async for chunk in _yield_text(decision["text"]):
+            yield chunk
 
-    def _plan_payload(self, decision: dict[str, Any]) -> dict[str, Any]:
-        tool_name = decision["tool_name"]
-        business_code = decision["tool_input"].get("business_code", "A_DEMO")
-        goal = decision["tool_input"].get("objective", f"Analyze {business_code}")
-        first_title = (
-            f"Run database analysis workflow for {business_code}"
-            if tool_name == "run_db_analysis_workflow"
-            else f"Run file analysis workflow for {business_code}"
-        )
-        return {
-            "goal": goal,
-            "business_code": business_code,
-            "entry": decision["tool_input"].get("entry", AgentEntry.FILE.value),
-            "steps": [
-                {
-                    "step_index": 0,
-                    "title": first_title,
-                    "tool_name": tool_name,
-                    "inputs_summary": {
-                        "business_code": business_code,
-                        "entry": decision["tool_input"].get("entry", AgentEntry.FILE.value),
-                        "chart_type": decision["tool_input"].get("chart_type", "scientific_plot"),
+    def _decide(self, messages) -> dict[str, object]:
+        last_message = messages[-1] if messages else None
+        if not isinstance(last_message, ModelRequest):
+            return {
+                "kind": "text",
+                "text": "I can help with file analysis, database analysis, and report follow-up.",
+            }
+
+        tool_return = next((part for part in last_message.parts if isinstance(part, ToolReturnPart)), None)
+        if tool_return is not None:
+            content = tool_return.content if isinstance(tool_return.content, str) else str(tool_return.content)
+            return {"kind": "text", "text": content}
+
+        retry_prompt = next((part for part in last_message.parts if isinstance(part, RetryPromptPart)), None)
+        if retry_prompt is not None:
+            retry_tool_name = retry_prompt.tool_name or ""
+            if retry_tool_name == "run_db_analysis_workflow":
+                user_prompt = self._latest_user_prompt(messages)
+                return {
+                    "kind": "tool",
+                    "tool_name": "run_db_analysis_workflow",
+                    "tool_args": {
+                        "business_code": _detect_business_code(user_prompt),
+                        "objective": user_prompt,
+                        "chart_type": "scientific_plot",
                     },
-                },
-                {
-                    "step_index": 1,
-                    "title": "Summarize workflow results for the user",
-                    "tool_name": "summarize_session_results",
-                    "inputs_summary": {"goal": goal},
-                },
-            ],
-            "expected_outputs": ["chart", "report"],
-            "planner_source": self.name,
-            "used_fallback": False,
-        }
+                    "tool_call_id": f"call-{uuid4().hex[:8]}",
+                }
+            if retry_tool_name == "run_file_analysis_workflow":
+                user_prompt = self._latest_user_prompt(messages)
+                business_code = _detect_business_code(user_prompt)
+                return {
+                    "kind": "tool",
+                    "tool_name": "run_file_analysis_workflow",
+                    "tool_args": {
+                        "business_code": business_code,
+                        "objective": user_prompt,
+                        "chart_type": "scientific_plot",
+                        "source_pattern": _detect_source_pattern(business_code),
+                    },
+                    "tool_call_id": f"call-{uuid4().hex[:8]}",
+                }
+
+        user_prompt = self._latest_user_prompt(messages)
+        business_code = _detect_business_code(user_prompt)
+        entry = _detect_entry(user_prompt)
+
+        if _is_report_summary_request(user_prompt):
+            return {
+                "kind": "tool",
+                "tool_name": "summarize_report",
+                "tool_args": {},
+                "tool_call_id": f"call-{uuid4().hex[:8]}",
+            }
+        if _is_report_request(user_prompt):
+            return {
+                "kind": "tool",
+                "tool_name": "load_latest_report",
+                "tool_args": {},
+                "tool_call_id": f"call-{uuid4().hex[:8]}",
+            }
+        if _looks_like_analysis_request(user_prompt):
+            tool_name = "run_db_analysis_workflow" if entry == AgentEntry.DATABASE.value else "run_file_analysis_workflow"
+            tool_args = {
+                "business_code": business_code,
+                "objective": user_prompt,
+                "chart_type": "scientific_plot",
+            }
+            if tool_name == "run_file_analysis_workflow":
+                tool_args["source_pattern"] = _detect_source_pattern(business_code)
+            return {
+                "kind": "tool",
+                "tool_name": tool_name,
+                "tool_args": tool_args,
+                "tool_call_id": f"call-{uuid4().hex[:8]}",
+            }
+        return {"kind": "text", "text": _chat_reply(user_prompt)}
 
     @staticmethod
-    def _detect_source_pattern(business_code: str) -> str:
-        if business_code == "B001":
-            return SourcePattern.SHARED_FILE.value
-        return SourcePattern.PER_BUSINESS_FILE.value
-
-    @staticmethod
-    def _is_chat(content: str, lower: str) -> bool:
-        greetings = {"hi", "hello", "hey", "你好", "您好", "嗨", "在吗", "你是谁", "你能做什么", "怎么用", "help"}
-        return lower in greetings or content in greetings
-
-    @staticmethod
-    def _is_report_request(content: str) -> bool:
-        lower = content.lower()
-        return (
-            "show me the report again" in lower
-            or "show the report again" in lower
-            or "report again" in lower
-            or "show latest report" in lower
-            or "再看报告" in content
-            or "重新看报告" in content
-        )
-
-    @staticmethod
-    def _is_report_summary_request(content: str) -> bool:
-        lower = content.lower()
-        return (
-            "summarize the report" in lower
-            or "summarise the report" in lower
-            or "report summary" in lower
-            or "key points" in lower
-            or "概括这份报告" in content
-            or "总结这份报告" in content
-            or "报告重点" in content
-        )
-
-    @staticmethod
-    def _looks_like_analysis_request(content: str, lower: str) -> bool:
-        markers = (
-            "a_demo",
-            "b001",
-            "database",
-            "scientific plot",
-            "report",
-            "analy",
-            "chart",
-            "plot",
-            "分析",
-            "报告",
-            "画图",
-            "绘图",
-            "数据库",
-        )
-        return any(marker in lower or marker in content for marker in markers)
-
-    @staticmethod
-    def _chat_reply(content: str) -> str:
-        normalized = content.strip().lower()
-        if normalized in {"hi", "hello", "hey", "你好", "您好", "嗨", "在吗"}:
-            return (
-                "你好。我可以帮你分析 demo 数据、生成科学绘图和报告。"
-                "你可以直接说：请用 A_DEMO 文件数据生成科学绘图和报告。"
-            )
-        if "你是谁" in content or "你能做什么" in content or "怎么用" in content or normalized == "help":
-            return (
-                "我是一个任务型分析 Agent。你可以让我跑文件分析、数据库分析、查看报告，"
-                "或者概括报告重点。"
-            )
-        return "我可以直接回复，也可以调用分析工作流。你可以试试文件 demo、数据库 demo，或者让我概括最近的报告。"
+    def _latest_user_prompt(messages) -> str:
+        for message in reversed(messages):
+            if not isinstance(message, ModelRequest):
+                continue
+            prompt = next((part.content for part in message.parts if isinstance(part, UserPromptPart)), None)
+            if isinstance(prompt, str) and prompt:
+                return prompt
+        return ""
 
 
+@dataclass
 class GLMProvider:
-    name = LLMProviderName.GLM.value
-
-    def __init__(
-        self,
-        base_url: str | None,
-        api_key: str | None,
-        requester: Requester | None = None,
-    ) -> None:
-        self.base_url = (base_url or "").rstrip("/")
-        self.api_key = api_key or ""
-        self.requester = requester
+    base_url: str | None
+    api_key: str | None
 
     def is_configured(self) -> bool:
-        return bool(self.base_url and self.api_key)
+        return bool((self.base_url or "").strip() and (self.api_key or "").strip())
 
-    def complete_json(self, *, system_prompt: str, user_prompt: str, model: str, timeout: float) -> str:
-        if not self.is_configured():
-            raise ValueError("glm provider is not configured")
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        url = f"{self.base_url}/chat/completions"
-        response_text = (
-            self.requester(url, payload, headers, timeout)
-            if self.requester
-            else self._post(url, payload, headers, timeout)
+    def build_model(self, model_name: str) -> OpenAIModel:
+        return OpenAIModel(
+            model_name,
+            provider=OpenAIProvider(base_url=(self.base_url or "").rstrip("/"), api_key=self.api_key or ""),
         )
-        response_payload = json.loads(response_text)
-        return response_payload["choices"][0]["message"]["content"]
 
-    @staticmethod
-    def _post(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> str:
-        req = request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        with request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8")
+
+def build_agent_model(settings: Settings):
+    fake = FakeLLM()
+    if settings.intent_mode == IntentMode.LLM:
+        provider = GLMProvider(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
+        if provider.is_configured():
+            return provider.build_model(settings.llm_model), IntentMode.LLM.value
+    return fake.build_model(), IntentMode.FAKE.value

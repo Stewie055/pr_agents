@@ -62,7 +62,7 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 - 右侧是聊天消息流，输入框固定在底部
 - 点击 `Run File Demo` 或 `Run DB Demo`
 - 页面默认只展示用户消息和 Agent 最终回复
-- 任务执行细节会折叠在 assistant 回复下方的 `Task details` 中，而不是单独堆叠 plan/tool/run 卡片
+- 任务执行中会先显示独立的工具卡片区；完成后，持久化后的执行细节仍折叠在 assistant 回复下方的 `Task details` 中
 - 报告正文默认放在 `Task details` 的 `Report preview` 中，避免和最终回复重复
 - 可以继续追问：
   - `Show me the report again.`
@@ -96,13 +96,12 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 ## Agent Runtime
 
-当前 Agent Orchestration 已重构为单一 `AgentRuntime` 主入口。它不再先写死 `chat / report / task` 分支，而是：
+当前 Agent Orchestration 已收敛为单一 `AgentRuntime` 主入口，内部使用一个 `PydanticAI Agent` 作为执行主体。它不再先写死 `chat / report / task` 分支，而是：
 
 - 通过 `ContextManager` 组装当前会话上下文
 - 通过 `Memory` 提供短期和中期记忆
-- 让 `ReactAgent` 基于 LLM 输出结构化决策
-- 在需要规划时，由 `ReactAgent` 内部调用 `PlannerAgent`
-- 仅允许调用 workflow-level tools
+- 让模型自己决定是直接回复还是调用白名单 workflow-level tools
+- 通过 deps 在工具之间传递最近报告、任务结果和产物引用
 - 通过 SSE 持续推送运行事件，并把 run/step/message/task/artifact 持久化到 SQLite
 
 当前模型由工厂在启动时注入：
@@ -112,7 +111,7 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 - `GLMProvider`
   作为真实模型 provider，当前默认模型为 `GLM-4.5-Air`
 
-`PydanticAI` 被保留在 Agent 内部，负责模型承接、结构化输出和 tool schema；领域业务仍然只在 `Workflow / Service`。
+`PydanticAI` 被保留在 Agent 内部，负责模型承接、tool schema、工具调用和流式事件；领域业务仍然只在 `Workflow / Service`。
 
 ## Streaming
 
@@ -123,15 +122,18 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 2. `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream`
    通过 `SSE` 接收：
    - `run_started`
-   - `chat_reply`
-   - `plan_created`
    - `step_started`
    - `tool_called`
    - `tool_result`
    - `step_completed`
+   - `step_failed`
+   - `assistant_started`
+   - `assistant_delta`
+   - `assistant_completed`
    - `run_completed` / `run_failed`
+   - `session_snapshot`
 
-因此普通聊天会很快返回，任务型请求会逐步显示计划和执行轨迹。
+因此普通聊天会直接进入 assistant 文本流；任务型请求会先显示独立的工具/步骤卡片区，再在工具完成后继续输出 assistant 回复。
 
 相关环境变量：
 
