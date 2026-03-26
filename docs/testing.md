@@ -16,6 +16,8 @@
 - 聊天式布局、会话列表和底部输入区示例
 - 服务重启后的任务结果恢复示例
 - Agent 意图解析示例
+- fake / llm 双模切换与 fallback 示例
+- GLM provider 请求构造与 provider 未配置 fallback 示例
 
 ## 运行
 

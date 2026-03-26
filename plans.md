@@ -58,6 +58,24 @@
 - 让 WebUI 页面优先恢复上一次活动会话，而不是每次刷新都新建 session。
 - 补充任务结果恢复和意图解析的自动化测试。
 
+## 第八阶段计划与实现
+
+- 将意图解析层升级为 fake / llm 双模可切换架构。
+- 保留 fake 规则解析器，作为业务 `Service` 适配阶段的默认稳定模式。
+- 接入 OpenAI 兼容的 llm 意图解析器，并在失败时自动回退到 fake。
+- 增加 `PR_AGENTS_INTENT_MODE`、LLM base URL、API key、model、timeout 配置。
+- 在 WebUI 和 Agent metadata 中展示当前 intent mode 与是否发生 fallback。
+
+## 第九阶段计划与实现
+
+- 将 llm 意图解析收敛为 provider 抽象，不再把 HTTP 调用直接写在 parser 里。
+- 新增 `GLMProvider`，用于承接 GLM 官方 API。
+- 保持 `fake` 与 `llm` 双模共存，默认仍使用 `fake` 以便先适配业务 `Service`。
+- 新增 `PR_AGENTS_LLM_PROVIDER` 配置，默认 provider 为 `glm`，默认模型为 `GLM-4.5-Air`。
+- LLM API key 只允许通过环境变量注入，不进入仓库。
+- 在 parser 层保留 fallback，provider 未配置、超时、响应非法时自动退回 `fake`。
+- 继续保持 Agent 会话层、任务层和 Workflow 层不直接依赖供应商实现，方便后续迁移到局域网环境。
+
 ## 下一阶段建议
 
 - 增加真实 QT Service 适配器。

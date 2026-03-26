@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from pr_agents.api import create_api_app
-from pr_agents.agent.intents import AgentIntentParser
+from pr_agents.agent.intents import FakeIntentParser, GLMProvider, LLMIntentParser
 from pr_agents.agent import AgentDependencies, AnalysisOrchestrator
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.infrastructure import ArtifactStore
@@ -36,11 +36,27 @@ def build_components(
         task_repository=TaskRepository(settings.sqlite_path),
         artifact_repository=ArtifactRepository(settings.sqlite_path),
     )
+    fake_intent_parser = FakeIntentParser()
+    if settings.intent_mode.value == "llm":
+        if settings.llm_provider.value != "glm":
+            raise ValueError(f"unsupported llm provider: {settings.llm_provider.value}")
+        provider = GLMProvider(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+        )
+        intent_parser = LLMIntentParser(
+            provider=provider,
+            model=settings.llm_model,
+            timeout=settings.llm_timeout,
+            fallback_parser=fake_intent_parser,
+        )
+    else:
+        intent_parser = fake_intent_parser
     agent_session_service = AgentSessionService(
         session_repository=AgentSessionRepository(settings.sqlite_path),
         task_service=task_service,
         demo_data_path="examples/demo_a.csv",
-        intent_parser=AgentIntentParser(),
+        intent_parser=intent_parser,
     )
     return WebUIFacade(orchestrator), task_service, agent_session_service
 

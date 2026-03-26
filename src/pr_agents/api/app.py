@@ -18,7 +18,7 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
 
     @app.get("/", response_class=HTMLResponse)
     def webui_home():
-        return render_agent_demo_page()
+        return render_agent_demo_page(agent_session_service.intent_mode)
 
     @app.post("/api/v1/tasks/file-analysis")
     def submit_file_analysis(request: FileAnalysisRequest):

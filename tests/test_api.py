@@ -1,8 +1,12 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from pr_agents.agent.intents import GLMProvider, LLMIntentParser
+from pr_agents.api.app import create_api_app
 from pr_agents.bootstrap import build_api_app
+from pr_agents.bootstrap import build_components
 from pr_agents.settings import Settings
 
 
@@ -196,6 +200,7 @@ def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
     assert "prompt" in response.text
     assert "Run A_DEMO" in response.text
     assert "/api/v1/agent/sessions" in response.text
+    assert "Intent mode:" in response.text
 
 
 def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
@@ -220,6 +225,9 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert payload["session_id"] == session_id
     assert any(msg["message_type"] == "plan" for msg in payload["messages"])
     assert any(msg["message_type"] == "tool_call" for msg in payload["messages"])
+    plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
+    assert plan_message["metadata"]["intent_mode"] == "fake"
+    assert plan_message["metadata"]["intent_source"] == "fake"
     result_message = next(
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )
@@ -294,3 +302,47 @@ def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> No
     assert payload["result"] is not None
     assert payload["result"]["report"] is not None
     assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
+
+
+def test_agent_session_uses_llm_mode_with_fallback_parser(tmp_path: Path) -> None:
+    settings = Settings(
+        artifact_base_dir=str(tmp_path / "artifacts"),
+        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+    )
+    webui, task_service, agent_session_service = build_components(settings)
+    del webui
+    agent_session_service.intent_parser = LLMIntentParser(
+        provider=GLMProvider(
+            base_url="https://glm.example.com/v1",
+            api_key="secret",
+            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"action":"analyze","business_code":"A_DEMO","entry":"file",'
+                                    '"objective":"Please analyze A_DEMO with the model.",'
+                                    '"chart_type":"scientific_plot","source_pattern":"per_business_file"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ),
+        ),
+        model="demo-model",
+        fallback_parser=agent_session_service.intent_parser,
+    )
+    app = create_api_app(task_service, agent_session_service)
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please analyze A_DEMO with the model."},
+    ).json()
+
+    plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
+    assert plan_message["metadata"]["intent_mode"] == "llm"
+    assert plan_message["metadata"]["intent_source"] == "llm"

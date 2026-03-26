@@ -55,6 +55,15 @@ class AgentEntry(str, Enum):
     DATABASE = "database"
 
 
+class IntentMode(str, Enum):
+    FAKE = "fake"
+    LLM = "llm"
+
+
+class LLMProviderName(str, Enum):
+    GLM = "glm"
+
+
 class TaskContext(BaseModel):
     session_id: str = Field(default_factory=lambda: f"session-{uuid4().hex[:8]}")
     task_id: str = Field(default_factory=lambda: f"task-{uuid4().hex[:8]}")
@@ -295,3 +304,5 @@ class AgentIntent(BaseModel):
     objective: str
     chart_type: str = "scientific_plot"
     source_pattern: SourcePattern = SourcePattern.PER_BUSINESS_FILE
+    intent_source: str = IntentMode.FAKE.value
+    used_fallback: bool = False

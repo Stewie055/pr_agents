@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from pr_agents.agent.intents import AgentIntentParser
+from pr_agents.agent.intents import IntentParser
 from pr_agents.application.tasks import TaskApplicationService
 from pr_agents.infrastructure import AgentSessionRepository
 from pr_agents.models import (
@@ -26,12 +26,16 @@ class AgentSessionService:
         session_repository: AgentSessionRepository,
         task_service: TaskApplicationService,
         demo_data_path: str,
-        intent_parser: AgentIntentParser | None = None,
+        intent_parser: IntentParser,
     ) -> None:
         self.session_repository = session_repository
         self.task_service = task_service
         self.demo_data_path = Path(demo_data_path)
-        self.intent_parser = intent_parser or AgentIntentParser()
+        self.intent_parser = intent_parser
+
+    @property
+    def intent_mode(self) -> str:
+        return self.intent_parser.mode.value
 
     def create_session(self) -> CreateAgentSessionResponse:
         session_id = f"session-{uuid4().hex[:8]}"
@@ -75,7 +79,13 @@ class AgentSessionService:
                 f"I will use {'database' if intent.entry == AgentEntry.DATABASE else 'file'} analysis "
                 f"for {intent.business_code}, generate a {intent.chart_type}, and return a report."
             ),
-            metadata={"business_code": intent.business_code, "entry": intent.entry.value},
+            metadata={
+                "business_code": intent.business_code,
+                "entry": intent.entry.value,
+                "intent_source": intent.intent_source,
+                "intent_mode": self.intent_mode,
+                "intent_fallback": intent.used_fallback,
+            },
         )
 
         tool_name = "run_db_analysis" if intent.entry == AgentEntry.DATABASE else "run_file_analysis"
@@ -84,7 +94,11 @@ class AgentSessionService:
             MessageRole.TOOL,
             MessageType.TOOL_CALL,
             tool_name,
-            metadata={"business_code": intent.business_code},
+            metadata={
+                "business_code": intent.business_code,
+                "intent_source": intent.intent_source,
+                "intent_mode": self.intent_mode,
+            },
         )
 
         if intent.entry == AgentEntry.DATABASE:
@@ -157,6 +171,9 @@ class AgentSessionService:
                 "task_id": task_response.task_id,
                 "report_artifact_id": report_artifact_id,
                 "business_code": intent.business_code,
+                "intent_source": intent.intent_source,
+                "intent_mode": self.intent_mode,
+                "intent_fallback": intent.used_fallback,
             },
         )
         return self.get_session(session_id)

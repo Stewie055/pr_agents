@@ -64,3 +64,27 @@
   - 任务结果
   - 报告正文
 - 页面刷新后会优先恢复最近活动 session
+- 页面顶部会显示当前 `Intent mode`
+
+## Intent Mode 配置
+
+- `fake`
+  规则式解析，适合开发和业务接入阶段
+- `llm`
+  基于 GLM 官方 API provider 的结构化意图解析；失败自动回退到 `fake`
+
+当前默认 LLM 配置约定：
+
+- `provider = glm`
+- `model = GLM-4.5-Air`
+- API key 只从环境变量读取
+- 若未来迁移到局域网环境，可通过替换 provider 配置或 provider 实现继续复用当前 Agent 主链路
+
+环境变量：
+
+- `PR_AGENTS_INTENT_MODE`
+- `PR_AGENTS_LLM_PROVIDER`
+- `PR_AGENTS_LLM_BASE_URL`
+- `PR_AGENTS_LLM_API_KEY`
+- `PR_AGENTS_LLM_MODEL`
+- `PR_AGENTS_LLM_TIMEOUT`

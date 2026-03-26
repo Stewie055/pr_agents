@@ -41,3 +41,8 @@
 - 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。
 - 用户 Demo 路径采用聊天式 Agent 会话：用户消息 -> Agent 计划 -> Tool 调用 -> 任务结果 -> 报告内容。
 - 当前 Agent 会话层已抽出独立意图解析器，并将任务结果快照持久化到 SQLite 以支持重启恢复。
+- 当前意图解析器支持双模：
+  - `fake`：规则式稳定模式
+  - `llm`：通过 provider 适配层调用真实模型，当前默认 provider 为 `glm`，失败自动回退到 `fake`
+- GLM 官方 API 的 HTTP 调用被隔离在独立 provider 中，`AgentSessionService` 和任务执行链路不直接依赖供应商细节。
+- 默认模型配置为 `GLM-4.5-Air`，便于开发环境先验证自然语言理解；后续迁移到局域网环境时可只替换 provider 配置或实现。

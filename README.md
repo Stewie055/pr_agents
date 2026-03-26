@@ -61,10 +61,35 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 - 页面会展示 Agent 计划、工具调用、任务结果和报告正文，但过程信息以次级执行卡片呈现
 - 页面刷新后会优先恢复上一次活动会话
 - 最近任务的结果快照会持久化到 SQLite，服务重启后仍可查询
+- 顶部会显示当前 `Intent mode`：`fake` 或 `llm`
 
 如果需要调试底层接口，再访问：
 
 - `http://<机器IP>:8000/docs`
+
+## Intent Mode
+
+当前支持两种意图解析模式：
+
+- `fake`
+  默认模式。适合你在接真实业务 `Service` 时先稳定调通流程。
+- `llm`
+  使用 GLM 官方 API 的 provider 适配层解析自然语言；若失败会自动回退到 `fake`。
+
+当前默认 LLM provider 为 `glm`，默认模型为 `GLM-4.5-Air`。为便于后续把代码拷贝到另一个局域网继续适配：
+
+- API key 只从环境变量读取，不写进仓库
+- provider HTTP 调用被封装在独立适配层里
+- 后续若切换到别的模型或局域网代理，只需要替换配置或 provider 实现，不需要重写 Agent 主链路
+
+相关环境变量：
+
+- `PR_AGENTS_INTENT_MODE`
+- `PR_AGENTS_LLM_PROVIDER`
+- `PR_AGENTS_LLM_BASE_URL`
+- `PR_AGENTS_LLM_API_KEY`
+- `PR_AGENTS_LLM_MODEL`
+- `PR_AGENTS_LLM_TIMEOUT`
 
 ## 目录说明
 

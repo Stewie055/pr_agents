@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def render_agent_demo_page() -> str:
+def render_agent_demo_page(intent_mode: str) -> str:
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -170,6 +170,13 @@ def render_agent_demo_page() -> str:
       margin: 6px 0 0;
       font-size: 13px;
       color: var(--muted);
+    }
+    .topbar-mode {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
     .conversation {
       min-width: 0;
@@ -354,6 +361,7 @@ def render_agent_demo_page() -> str:
       <header class="topbar">
         <h2>Agent Workspace</h2>
         <p id="session-title">Start a conversation and ask the agent to analyze demo data.</p>
+        <div class="topbar-mode">Intent mode: <strong>""" + intent_mode + """</strong></div>
       </header>
       <section class="conversation" id="conversation">
         <div class="conversation-inner" id="messages">
