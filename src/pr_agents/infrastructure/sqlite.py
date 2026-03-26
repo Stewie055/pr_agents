@@ -5,7 +5,18 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pr_agents.models import ArtifactRecord, ArtifactType, SessionRecord, TaskRecord, TaskStatus
+from uuid import uuid4
+
+from pr_agents.models import (
+    AgentMessage,
+    ArtifactRecord,
+    ArtifactType,
+    MessageRole,
+    MessageType,
+    SessionRecord,
+    TaskRecord,
+    TaskStatus,
+)
 
 
 def utc_now() -> str:
@@ -57,6 +68,17 @@ class SQLiteRepository:
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    message_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    message_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
                 );
                 """
             )
@@ -212,6 +234,85 @@ class ArtifactRepository(SQLiteRepository):
             artifact_type=ArtifactType(row["artifact_type"]),
             uri=row["uri"],
             filename=row["filename"],
+            metadata=json.loads(row["metadata"]),
+            created_at=row["created_at"],
+        )
+
+
+class AgentSessionRepository(SQLiteRepository):
+    def create_session(self, session_id: str) -> SessionRecord:
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO sessions(session_id, created_at, updated_at)
+                VALUES(?, ?, ?)
+                """,
+                (session_id, now, now),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                (now, session_id),
+            )
+            row = conn.execute(
+                "SELECT session_id, created_at, updated_at FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return SessionRecord(**dict(row))
+
+    def add_message(
+        self,
+        session_id: str,
+        role: MessageRole,
+        message_type: MessageType,
+        content: str,
+        metadata: dict | None = None,
+    ) -> AgentMessage:
+        self.create_session(session_id)
+        now = utc_now()
+        message_id = f"msg-{uuid4().hex[:8]}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_messages(message_id, session_id, role, message_type, content, metadata, created_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    session_id,
+                    role.value,
+                    message_type.value,
+                    content,
+                    json.dumps(metadata or {}),
+                    now,
+                ),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                (now, session_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM agent_messages WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+        return self._message_from_row(row)
+
+    def list_messages(self, session_id: str) -> list[AgentMessage]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_messages WHERE session_id = ? ORDER BY created_at ASC",
+                (session_id,),
+            ).fetchall()
+        return [self._message_from_row(row) for row in rows]
+
+    @staticmethod
+    def _message_from_row(row: sqlite3.Row) -> AgentMessage:
+        return AgentMessage(
+            message_id=row["message_id"],
+            session_id=row["session_id"],
+            role=MessageRole(row["role"]),
+            message_type=MessageType(row["message_type"]),
+            content=row["content"],
             metadata=json.loads(row["metadata"]),
             created_at=row["created_at"],
         )

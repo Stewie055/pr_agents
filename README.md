@@ -38,6 +38,32 @@ uv run pytest
 uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn; uvicorn.run(build_api_app(), host='127.0.0.1', port=8000)"
 ```
 
+## Run Demo
+
+仓库内置了一条官方 demo：A 类文件业务 `A_DEMO`，输出科学绘图和报告。
+
+样例数据见：
+
+- [`examples/demo_a.csv`](/root/projects/pr_agents/examples/demo_a.csv)
+
+完整演示步骤见：
+
+- [`docs/demo.md`](/root/projects/pr_agents/docs/demo.md)
+
+## WebUI Demo
+
+现在默认用户入口是聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。
+
+- 打开 `http://<机器IP>:8000/`
+- 左侧是会话列表和 `New chat`
+- 右侧是聊天消息流，输入框固定在底部
+- 点击 `Run A_DEMO`
+- 页面会展示 Agent 计划、工具调用、任务结果和报告正文，但过程信息以次级执行卡片呈现
+
+如果需要调试底层接口，再访问：
+
+- `http://<机器IP>:8000/docs`
+
 ## 目录说明
 
 ```text
@@ -53,6 +79,7 @@ src/pr_agents/
   models.py          统一数据模型
 tests/               自动化测试
 docs/                设计与说明文档
+examples/            演示样例数据
 ```
 
 ## 当前默认实现

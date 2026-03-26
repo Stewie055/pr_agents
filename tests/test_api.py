@@ -89,7 +89,7 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
 
     from pr_agents.bootstrap import build_components
 
-    _, task_service = build_components(
+    _, task_service, _ = build_components(
         Settings(
             artifact_base_dir=str(tmp_path / "artifacts"),
             sqlite_path=str(tmp_path / "artifacts" / "app.db"),
@@ -136,3 +136,128 @@ def test_shared_file_business_mode_and_scientific_plot(tmp_path: Path) -> None:
     assert payload["result"]["dataset"]["row_count"] == 2
     assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
     assert payload["result"]["dataset"]["metadata"]["business_code"] == "B001"
+
+
+def test_official_a_demo_flow_returns_scientific_plot_and_report(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/tasks/file-analysis",
+        json={
+            "business_code": "A_DEMO",
+            "objective": "Generate a scientific plot report for the demo dataset",
+            "file_name": "demo_a.csv",
+            "content": "temperature,pressure\n21.5,101.2\n22.1,101.5\n22.8,101.7\n",
+            "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"},
+            "chart_profile": {"chart_type": "scientific_plot"},
+            "report_profile": {"template": "demo-template"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
+    assert payload["result"]["report"] is not None
+
+    task_id = payload["task_id"]
+    task_payload = client.get(f"/api/v1/tasks/{task_id}").json()
+    report_artifact = next(
+        artifact for artifact in task_payload["artifacts"] if artifact["artifact_type"] == "report"
+    )
+    report_content = client.get(f"/api/v1/artifacts/{report_artifact['artifact_id']}/content")
+
+    assert report_content.status_code == 200
+    assert "business_code=A_DEMO" in report_content.text
+    assert "Generate a scientific plot report for the demo dataset" in report_content.text
+
+
+def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Agent Workspace" in response.text
+    assert "New chat" in response.text
+    assert "session-list" in response.text
+    assert "prompt" in response.text
+    assert "Run A_DEMO" in response.text
+    assert "/api/v1/agent/sessions" in response.text
+
+
+def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    create_response = client.post("/api/v1/agent/sessions")
+    assert create_response.status_code == 200
+    session_id = create_response.json()["session_id"]
+
+    message_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+    )
+    assert message_response.status_code == 200
+    payload = message_response.json()
+    assert payload["session_id"] == session_id
+    assert any(msg["message_type"] == "plan" for msg in payload["messages"])
+    assert any(msg["message_type"] == "tool_call" for msg in payload["messages"])
+    result_message = next(
+        msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
+    )
+    assert "scientific_plot" in result_message["content"]
+
+    follow_up = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Show me the report again."},
+    )
+    assert follow_up.status_code == 200
+    follow_up_payload = follow_up.json()
+    assert len(follow_up_payload["messages"]) > len(payload["messages"])
+    assert "business_code=A_DEMO" in follow_up_payload["messages"][-1]["content"]
+
+
+def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+    ).json()
+    task_with_result = next(task for task in payload["tasks"] if task["status"] == "succeeded")
+    task_detail = client.get(f"/api/v1/tasks/{task_with_result['task_id']}").json()
+    report_artifact = next(
+        artifact for artifact in task_detail["artifacts"] if artifact["artifact_type"] == "report"
+    )
+
+    report_response = client.get(
+        f"/api/v1/agent/sessions/{session_id}/artifacts/{report_artifact['artifact_id']}/content"
+    )
+
+    assert report_response.status_code == 200
+    assert "Analysis completed" in report_response.text

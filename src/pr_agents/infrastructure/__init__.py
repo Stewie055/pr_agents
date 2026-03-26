@@ -1,4 +1,4 @@
 from .artifacts import ArtifactStore
-from .sqlite import ArtifactRepository, TaskRepository
+from .sqlite import AgentSessionRepository, ArtifactRepository, TaskRepository
 
-__all__ = ["ArtifactRepository", "ArtifactStore", "TaskRepository"]
+__all__ = ["AgentSessionRepository", "ArtifactRepository", "ArtifactStore", "TaskRepository"]

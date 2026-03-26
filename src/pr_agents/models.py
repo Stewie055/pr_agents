@@ -31,6 +31,20 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class MessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class MessageType(str, Enum):
+    CHAT = "chat"
+    PLAN = "plan"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    ERROR = "error"
+
+
 class TaskContext(BaseModel):
     session_id: str = Field(default_factory=lambda: f"session-{uuid4().hex[:8]}")
     task_id: str = Field(default_factory=lambda: f"task-{uuid4().hex[:8]}")
@@ -238,3 +252,27 @@ class TaskDetailResponse(BaseModel):
 class SessionTasksResponse(BaseModel):
     session_id: str
     tasks: list[TaskRecord] = Field(default_factory=list)
+
+
+class AgentMessage(BaseModel):
+    message_id: str
+    session_id: str
+    role: MessageRole
+    message_type: MessageType
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class AgentSessionResponse(BaseModel):
+    session_id: str
+    messages: list[AgentMessage] = Field(default_factory=list)
+    tasks: list[TaskRecord] = Field(default_factory=list)
+
+
+class CreateAgentSessionResponse(BaseModel):
+    session_id: str
+
+
+class AgentUserMessageRequest(BaseModel):
+    content: str

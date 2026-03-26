@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import HTMLResponse
 
-from pr_agents.application import TaskApplicationService
-from pr_agents.models import DatabaseAnalysisRequest, FileAnalysisRequest, SessionTasksResponse
+from pr_agents.application import AgentSessionService, TaskApplicationService
+from pr_agents.models import (
+    AgentUserMessageRequest,
+    DatabaseAnalysisRequest,
+    FileAnalysisRequest,
+    SessionTasksResponse,
+)
+from pr_agents.webui import render_agent_demo_page
 
 
-def create_api_app(task_service: TaskApplicationService) -> FastAPI:
+def create_api_app(task_service: TaskApplicationService, agent_session_service: AgentSessionService) -> FastAPI:
     app = FastAPI(title="pr_agents API", version="0.1.0")
+
+    @app.get("/", response_class=HTMLResponse)
+    def webui_home():
+        return render_agent_demo_page()
 
     @app.post("/api/v1/tasks/file-analysis")
     def submit_file_analysis(request: FileAnalysisRequest):
@@ -39,6 +50,28 @@ def create_api_app(task_service: TaskApplicationService) -> FastAPI:
     def read_artifact_content(artifact_id: str):
         try:
             content = task_service.read_artifact_content(artifact_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+        if content is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return Response(content=content, media_type="text/plain; charset=utf-8")
+
+    @app.post("/api/v1/agent/sessions")
+    def create_agent_session():
+        return agent_session_service.create_session()
+
+    @app.get("/api/v1/agent/sessions/{session_id}")
+    def get_agent_session(session_id: str):
+        return agent_session_service.get_session(session_id)
+
+    @app.post("/api/v1/agent/sessions/{session_id}/messages")
+    def send_agent_message(session_id: str, request: AgentUserMessageRequest):
+        return agent_session_service.handle_message(session_id, request)
+
+    @app.get("/api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content")
+    def read_agent_session_artifact_content(session_id: str, artifact_id: str):
+        try:
+            content = agent_session_service.read_session_artifact_content(session_id, artifact_id)
         except ValueError as exc:
             raise HTTPException(status_code=415, detail=str(exc)) from exc
         if content is None:

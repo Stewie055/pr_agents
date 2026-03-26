@@ -14,6 +14,16 @@
   查询 artifact 元数据
 - `GET /api/v1/artifacts/{artifact_id}/content`
   读取文本类产物内容
+- `POST /api/v1/agent/sessions`
+  创建 Agent 聊天会话
+- `GET /api/v1/agent/sessions/{session_id}`
+  查询 Agent 会话消息和关联任务
+- `POST /api/v1/agent/sessions/{session_id}/messages`
+  发送用户消息并触发 Agent
+- `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content`
+  读取当前会话内的报告内容
+- `GET /`
+  返回聊天式 Agent WebUI
 
 ## 第一版约束
 
@@ -40,3 +50,16 @@
   报告参数透传
 
 当前 API 层只做参数承接和透传，不解释业务规则。
+
+## Agent Demo
+
+当前用户主入口是根路径 `/` 的聊天式 WebUI。
+
+- 页面内可直接创建会话
+- 可一键运行 `A_DEMO`
+- 会展示：
+  - 用户消息
+  - Agent 计划
+  - 工具调用
+  - 任务结果
+  - 报告正文

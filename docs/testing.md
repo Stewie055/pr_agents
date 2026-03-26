@@ -11,6 +11,9 @@
 - SQLite 持久化与失败状态流转
 - A 类单业务单文件和 B 类共享文件示例
 - `scientific_plot` 图表产物示例
+- 官方 `A_DEMO` demo 闭环示例
+- Agent 会话 API、多轮追问和 WebUI 首页示例
+- 聊天式布局、会话列表和底部输入区示例
 
 ## 运行
 

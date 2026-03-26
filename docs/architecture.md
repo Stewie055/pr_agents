@@ -8,11 +8,11 @@
 
 ### WebUI
 
-负责用户输入、任务发起、结果展示、会话视图，不承载领域逻辑。当前通过 `FastAPI + WebUIFacade` 作为后端入口。
+负责用户输入、任务发起、结果展示、会话视图，不承载领域逻辑。当前通过 `FastAPI + 聊天式单页 WebUI` 作为用户入口。
 
 ### Agent Orchestration
 
-负责根据用户意图选择 Tool 和组织参数，管理 session 和运行上下文。
+负责根据用户意图选择 Tool 和组织参数，管理 session 和运行上下文。当前在 Agent WebUI demo 中采用可控的规则驱动会话层，展示计划、工具调用和结果。
 
 ### Tool
 
@@ -39,3 +39,4 @@
 - 任务执行采用同步模式，但统一使用 `task_id` 和状态机模型，便于后续扩展异步执行。
 - A 类“单业务单文件”和 B 类“多业务共享文件”不拆成两套 API，只通过 `business_code` 和 `source_profile` 区分。
 - 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。
+- 用户 Demo 路径采用聊天式 Agent 会话：用户消息 -> Agent 计划 -> Tool 调用 -> 任务结果 -> 报告内容。
