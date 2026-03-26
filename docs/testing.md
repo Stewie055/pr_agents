@@ -18,6 +18,11 @@
 - Agent 意图解析示例
 - fake / llm 双模切换与 fallback 示例
 - GLM provider 请求构造与 provider 未配置 fallback 示例
+- 普通聊天不触发工具的 session 示例
+- workflow-level planner 与 run/step 轨迹示例
+- SSE run 启动、事件流顺序和 session 最终一致性示例
+- WebUI “最终回复优先 + 折叠 Task details” 展示示例
+- 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
 
 ## 运行
 

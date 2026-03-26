@@ -19,7 +19,9 @@
 - `GET /api/v1/agent/sessions/{session_id}`
   查询 Agent 会话消息和关联任务
 - `POST /api/v1/agent/sessions/{session_id}/messages`
-  发送用户消息并触发 Agent
+  创建一次新的 Agent run，返回 `run_id` 和 `stream_url`
+- `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream`
+  通过 `SSE` 流式读取 Agent 事件
 - `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content`
   读取当前会话内的报告内容
 - `GET /`
@@ -56,15 +58,23 @@
 当前用户主入口是根路径 `/` 的聊天式 WebUI。
 
 - 页面内可直接创建会话
-- 可一键运行 `A_DEMO`
+- 可一键运行两条官方示例：
+  - `Run File Demo`
+  - `Run DB Demo`
 - 会展示：
   - 用户消息
-  - Agent 计划
-  - 工具调用
-  - 任务结果
-  - 报告正文
+  - Agent 最终回复
+  - 折叠的 `Task details`
 - 页面刷新后会优先恢复最近活动 session
 - 页面顶部会显示当前 `Intent mode`
+- 普通聊天消息不会触发任务，也不会出现 tool_call
+- 任务型消息会在 session 响应中返回 `runs`，其中包含计划状态和步骤摘要
+- WebUI 不再等待整包消息执行完成，而是订阅 run 的 `SSE` 事件流
+- WebUI 默认不把 `plan`、`tool_call`、`tool_result` 直接渲染成主消息
+- 任务型 run 会聚合到 assistant 回复下方的折叠详情里；纯聊天 run 不会单独显示
+- 页面内还提供两类标准追问：
+  - `Show latest report`
+  - `Summarize report`
 
 ## Intent Mode 配置
 
@@ -88,3 +98,43 @@
 - `PR_AGENTS_LLM_API_KEY`
 - `PR_AGENTS_LLM_MODEL`
 - `PR_AGENTS_LLM_TIMEOUT`
+
+## Agent Session 响应
+
+`GET /api/v1/agent/sessions/{session_id}` 现在返回：
+
+- `messages`
+  聊天消息和执行摘要消息
+- `tasks`
+  workflow 级任务记录
+- `runs`
+  Agent 运行轨迹。每个 run 包含：
+  - `goal`
+  - `status`
+  - `summary`
+  - `steps`
+
+普通聊天只会追加 `messages`；明确任务请求才会创建 `runs` 和 `tasks`。
+
+当前官方 demo 推荐的两条 agent prompt：
+
+- `Please use A_DEMO file data to generate a scientific plot and report.`
+- `Please use database data to generate a scientific plot and report for A_DEMO.`
+
+## SSE 事件
+
+`GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream` 返回 `text/event-stream`，当前事件包括：
+
+- `run_started`
+- `chat_reply`
+- `plan_created`
+- `step_started`
+- `tool_called`
+- `tool_result`
+- `step_completed`
+- `step_failed`
+- `run_completed`
+- `run_failed`
+- `session_snapshot`
+
+第一版前端在收到事件后会刷新当前 session，以同步 `messages/tasks/runs` 的最新状态。

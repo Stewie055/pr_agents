@@ -9,6 +9,10 @@ from uuid import uuid4
 
 from pr_agents.models import (
     AgentMessage,
+    AgentPlanStep,
+    AgentRun,
+    AgentRunStatus,
+    AgentStepStatus,
     ArtifactRecord,
     ArtifactType,
     MessageRole,
@@ -87,6 +91,36 @@ class SQLiteRepository:
                     payload TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_runs (
+                    run_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    intent_mode TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_run_steps (
+                    step_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    step_index INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    inputs_summary TEXT NOT NULL,
+                    observation_summary TEXT NOT NULL,
+                    error_summary TEXT NOT NULL,
+                    task_id TEXT,
+                    artifact_ids TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES agent_runs(run_id)
                 );
                 """
             )
@@ -335,6 +369,180 @@ class AgentSessionRepository(SQLiteRepository):
             ).fetchall()
         return [self._message_from_row(row) for row in rows]
 
+    def create_run(
+        self,
+        session_id: str,
+        goal: str,
+        intent_mode: str,
+        metadata: dict | None = None,
+    ) -> AgentRun:
+        self.create_session(session_id)
+        now = utc_now()
+        run_id = f"run-{uuid4().hex[:8]}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_runs(run_id, session_id, goal, status, summary, intent_mode, metadata, created_at, updated_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    session_id,
+                    goal,
+                    AgentRunStatus.PLANNED.value,
+                    "",
+                    intent_mode,
+                    json.dumps(metadata or {}),
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+        return self._run_from_row(row, [])
+
+    def get_run(self, run_id: str) -> AgentRun | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+            if row is None:
+                return None
+            steps = conn.execute(
+                "SELECT * FROM agent_run_steps WHERE run_id = ? ORDER BY step_index ASC",
+                (run_id,),
+            ).fetchall()
+        return self._run_from_row(row, [self._step_from_row(step) for step in steps])
+
+    def update_run(
+        self,
+        run_id: str,
+        status: AgentRunStatus,
+        summary: str = "",
+        metadata: dict | None = None,
+    ) -> AgentRun | None:
+        now = utc_now()
+        with self._connect() as conn:
+            current = conn.execute("SELECT metadata FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+            if current is None:
+                return None
+            merged_metadata = json.loads(current["metadata"])
+            if metadata:
+                merged_metadata.update(metadata)
+            conn.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, summary = ?, metadata = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (status.value, summary, json.dumps(merged_metadata), now, run_id),
+            )
+            row = conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+            steps = conn.execute(
+                "SELECT * FROM agent_run_steps WHERE run_id = ? ORDER BY step_index ASC",
+                (run_id,),
+            ).fetchall()
+        return self._run_from_row(row, [self._step_from_row(step) for step in steps])
+
+    def create_run_step(
+        self,
+        run_id: str,
+        step_index: int,
+        title: str,
+        tool_name: str,
+        inputs_summary: dict | None = None,
+    ) -> AgentPlanStep:
+        now = utc_now()
+        step_id = f"step-{uuid4().hex[:8]}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_run_steps(
+                    step_id, run_id, step_index, title, tool_name, status, inputs_summary,
+                    observation_summary, error_summary, task_id, artifact_ids, created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    run_id,
+                    step_index,
+                    title,
+                    tool_name,
+                    AgentStepStatus.PENDING.value,
+                    json.dumps(inputs_summary or {}),
+                    json.dumps({}),
+                    json.dumps({}),
+                    None,
+                    json.dumps([]),
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM agent_run_steps WHERE step_id = ?", (step_id,)).fetchone()
+        return self._step_from_row(row)
+
+    def update_run_step(
+        self,
+        step_id: str,
+        status: AgentStepStatus,
+        observation_summary: dict | None = None,
+        error_summary: dict | None = None,
+        task_id: str | None = None,
+        artifact_ids: list[str] | None = None,
+    ) -> AgentPlanStep | None:
+        now = utc_now()
+        with self._connect() as conn:
+            current = conn.execute("SELECT * FROM agent_run_steps WHERE step_id = ?", (step_id,)).fetchone()
+            if current is None:
+                return None
+            current_observation = json.loads(current["observation_summary"])
+            current_error = json.loads(current["error_summary"])
+            current_artifact_ids = json.loads(current["artifact_ids"])
+            if observation_summary:
+                current_observation.update(observation_summary)
+            if error_summary:
+                current_error.update(error_summary)
+            if artifact_ids:
+                current_artifact_ids = artifact_ids
+            conn.execute(
+                """
+                UPDATE agent_run_steps
+                SET status = ?, observation_summary = ?, error_summary = ?, task_id = COALESCE(?, task_id),
+                    artifact_ids = ?, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (
+                    status.value,
+                    json.dumps(current_observation),
+                    json.dumps(current_error),
+                    task_id,
+                    json.dumps(current_artifact_ids),
+                    now,
+                    step_id,
+                ),
+            )
+            row = conn.execute("SELECT * FROM agent_run_steps WHERE step_id = ?", (step_id,)).fetchone()
+        return self._step_from_row(row)
+
+    def list_runs(self, session_id: str) -> list[AgentRun]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC",
+                (session_id,),
+            ).fetchall()
+            step_rows = conn.execute(
+                """
+                SELECT s.* FROM agent_run_steps s
+                JOIN agent_runs r ON r.run_id = s.run_id
+                WHERE r.session_id = ?
+                ORDER BY s.step_index ASC, s.created_at ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        steps_by_run: dict[str, list[AgentPlanStep]] = {}
+        for row in step_rows:
+            step = self._step_from_row(row)
+            steps_by_run.setdefault(step.run_id, []).append(step)
+        return [self._run_from_row(row, steps_by_run.get(row["run_id"], [])) for row in rows]
+
     @staticmethod
     def _message_from_row(row: sqlite3.Row) -> AgentMessage:
         return AgentMessage(
@@ -345,4 +553,37 @@ class AgentSessionRepository(SQLiteRepository):
             content=row["content"],
             metadata=json.loads(row["metadata"]),
             created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _step_from_row(row: sqlite3.Row) -> AgentPlanStep:
+        return AgentPlanStep(
+            step_id=row["step_id"],
+            run_id=row["run_id"],
+            step_index=row["step_index"],
+            title=row["title"],
+            tool_name=row["tool_name"],
+            status=AgentStepStatus(row["status"]),
+            inputs_summary=json.loads(row["inputs_summary"]),
+            observation_summary=json.loads(row["observation_summary"]),
+            error_summary=json.loads(row["error_summary"]),
+            task_id=row["task_id"],
+            artifact_ids=json.loads(row["artifact_ids"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _run_from_row(row: sqlite3.Row, steps: list[AgentPlanStep]) -> AgentRun:
+        return AgentRun(
+            run_id=row["run_id"],
+            session_id=row["session_id"],
+            goal=row["goal"],
+            status=AgentRunStatus(row["status"]),
+            summary=row["summary"],
+            intent_mode=row["intent_mode"],
+            metadata=json.loads(row["metadata"]),
+            steps=steps,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )

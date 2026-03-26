@@ -1,6 +1,7 @@
 import json
 
 from pr_agents.agent.intents import FakeIntentParser, GLMProvider, LLMIntentParser
+from pr_agents.agent.runtime import ConversationRouter, FakePlanner
 from pr_agents.models import AgentAction, AgentEntry, IntentMode, SourcePattern
 
 
@@ -16,6 +17,15 @@ def test_intent_parser_recognizes_database_request() -> None:
     assert intent.intent_source == IntentMode.FAKE.value
 
 
+def test_intent_parser_recognizes_chat_message() -> None:
+    parser = FakeIntentParser()
+
+    intent = parser.parse("你好")
+
+    assert intent.action == AgentAction.CHAT
+    assert intent.intent_source == IntentMode.FAKE.value
+
+
 def test_intent_parser_recognizes_report_follow_up() -> None:
     parser = FakeIntentParser()
 
@@ -24,6 +34,14 @@ def test_intent_parser_recognizes_report_follow_up() -> None:
     assert intent.action == AgentAction.SHOW_REPORT
     assert intent.entry == AgentEntry.FILE
     assert intent.source_pattern == SourcePattern.PER_BUSINESS_FILE
+
+
+def test_intent_parser_recognizes_report_summary_follow_up() -> None:
+    parser = FakeIntentParser()
+
+    intent = parser.parse("Please summarize the report key points.")
+
+    assert intent.action == AgentAction.SHOW_REPORT
 
 
 def test_llm_intent_parser_returns_llm_intent() -> None:
@@ -100,3 +118,23 @@ def test_llm_intent_parser_falls_back_when_provider_is_not_configured() -> None:
     assert intent.intent_source == "llm_fallback"
     assert intent.used_fallback is True
     assert intent.entry == AgentEntry.DATABASE
+
+
+def test_conversation_router_fast_paths_chat_and_report() -> None:
+    router = ConversationRouter()
+
+    assert router.route("你好") == AgentAction.CHAT
+    assert router.route("Show me the report again.") == AgentAction.SHOW_REPORT
+    assert router.route("Please summarize the report key points.") == AgentAction.SHOW_REPORT
+    assert router.route("Please use A_DEMO file data to generate a scientific plot and report.") is None
+
+
+def test_fake_planner_builds_two_step_workflow_plan() -> None:
+    planner = FakePlanner()
+    intent = FakeIntentParser().parse("Please use A_DEMO database data to generate a scientific plot and report.")
+
+    plan = planner.build_plan(intent)
+
+    assert len(plan.steps) == 2
+    assert plan.steps[0].tool_name == "run_db_analysis_workflow"
+    assert plan.steps[1].tool_name == "summarize_session_results"

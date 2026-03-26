@@ -76,6 +76,42 @@
 - 在 parser 层保留 fallback，provider 未配置、超时、响应非法时自动退回 `fake`。
 - 继续保持 Agent 会话层、任务层和 Workflow 层不直接依赖供应商实现，方便后续迁移到局域网环境。
 
+## 第十阶段计划与实现
+
+- 将 Agent 从“意图解析后直接调 workflow”升级为真正的 `Router -> Planner -> Executor` 运行时。
+- 增加 `chat / analyze / show_report` 三类动作，普通聊天默认不触发工具。
+- 增加 workflow-level 的结构化计划与步骤轨迹，并持久化到 SQLite。
+- 对任务型请求返回 `runs`，包含 run 状态、步骤状态和关键 observation 摘要。
+- WebUI 改为普通聊天只显示消息，任务请求额外显示 run/step 轨迹卡。
+- 保持 `fake` / `llm` 双模在 router/planner 层都可用，`llm` 失败仍回退到 `fake`。
+
+## 第十一阶段计划与实现
+
+- 将 Agent 消息发送改造成 `POST 创建 run + GET SSE 订阅` 的流式模式。
+- 新增 run 级 SSE 事件：`run_started`、`chat_reply`、`plan_created`、`step_started`、`tool_called`、`tool_result`、`step_completed`、`run_completed`、`run_failed`。
+- WebUI 发送消息后改用 `EventSource` 订阅事件，不再等待整包 JSON 才更新界面。
+- 继续以 SQLite 作为最终状态来源，SSE 只负责实时观察；前端收到事件后刷新当前 session 对齐状态。
+- 保留现有 `GET session`、task、artifact 查询接口作为恢复和回放入口。
+
+## 第十二阶段计划与实现
+
+- 收敛 Agent 默认输出层级，主消息区只保留用户输入和 assistant 最终回复。
+- 不再把 `plan`、`tool_call`、`tool_result` 作为独立主消息渲染。
+- 将任务 run 轨迹聚合到 assistant 回复下方的折叠 `Task details` 中，避免与主回复重复。
+- 将任务型最终回复从“摘要+完整报告正文”改成仅返回摘要，并把原始报告文本放入 `report_preview` 供折叠详情展示。
+- 保持 SQLite 中的消息、run、step 原始数据不删减，只改变 WebUI 默认展示方式。
+
+## 第十三阶段计划与实现
+
+- 将官方 demo 从单一 `A_DEMO` 文件链路升级为双主线示例：
+  - 文件分析主线
+  - 数据库分析主线
+- WebUI 新增 `Run File Demo`、`Run DB Demo` 和报告摘要追问快捷入口。
+- 报告追问扩展为两类：
+  - 返回完整报告
+  - 返回报告重点摘要
+- README 与 `docs/demo.md` 改写为面向外部展示的示例手册，默认以 `llm` 模式演示，`fake` 作为开发回退说明。
+
 ## 下一阶段建议
 
 - 增加真实 QT Service 适配器。

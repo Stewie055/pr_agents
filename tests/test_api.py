@@ -3,11 +3,32 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from pr_agents.agent import FakePlanner, LLMPlanner
 from pr_agents.agent.intents import GLMProvider, LLMIntentParser
 from pr_agents.api.app import create_api_app
 from pr_agents.bootstrap import build_api_app
 from pr_agents.bootstrap import build_components
 from pr_agents.settings import Settings
+
+
+def consume_sse(client: TestClient, url: str) -> list[dict]:
+    events: list[dict] = []
+    with client.stream("GET", url) as response:
+        assert response.status_code == 200
+        event_name = None
+        data = None
+        for line in response.iter_lines():
+            if not line:
+                if event_name and data:
+                    events.append({"event": event_name, "data": json.loads(data)})
+                event_name = None
+                data = None
+                continue
+            if line.startswith("event: "):
+                event_name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = line[len("data: ") :]
+    return events
 
 
 def test_file_analysis_api_and_task_queries(tmp_path: Path) -> None:
@@ -198,8 +219,15 @@ def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
     assert "New chat" in response.text
     assert "session-list" in response.text
     assert "prompt" in response.text
-    assert "Run A_DEMO" in response.text
+    assert "Run File Demo" in response.text
+    assert "Run DB Demo" in response.text
+    assert "Summarize report" in response.text
     assert "/api/v1/agent/sessions" in response.text
+    assert "EventSource" in response.text
+    assert "Queued..." in response.text
+    assert "Task details" in response.text
+    assert "report_preview" in response.text
+    assert "filter(function (message)" in response.text
     assert "Intent mode:" in response.text
 
 
@@ -216,15 +244,27 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert create_response.status_code == 200
     session_id = create_response.json()["session_id"]
 
-    message_response = client.post(
+    start_response = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
         json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
     )
-    assert message_response.status_code == 200
-    payload = message_response.json()
-    assert payload["session_id"] == session_id
+    assert start_response.status_code == 200
+    start_payload = start_response.json()
+    assert start_payload["session_id"] == session_id
+    events = consume_sse(client, start_payload["stream_url"])
+    event_names = [event["event"] for event in events]
+    assert "run_started" in event_names
+    assert "routing_started" in event_names
+    assert "planning_started" in event_names
+    assert "plan_created" in event_names
+    assert "tool_called" in event_names
+    assert "run_completed" in event_names
+
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     assert any(msg["message_type"] == "plan" for msg in payload["messages"])
     assert any(msg["message_type"] == "tool_call" for msg in payload["messages"])
+    assert payload["runs"]
+    assert payload["runs"][0]["steps"]
     plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
     assert plan_message["metadata"]["intent_mode"] == "fake"
     assert plan_message["metadata"]["intent_source"] == "fake"
@@ -232,15 +272,85 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )
     assert "scientific_plot" in result_message["content"]
+    assert "business_code=A_DEMO" not in result_message["content"]
+    assert result_message["metadata"]["report_preview"].startswith("# ")
 
-    follow_up = client.post(
+    follow_up_start = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
         json={"content": "Show me the report again."},
     )
-    assert follow_up.status_code == 200
-    follow_up_payload = follow_up.json()
+    assert follow_up_start.status_code == 200
+    follow_up_events = consume_sse(client, follow_up_start.json()["stream_url"])
+    assert any(event["event"] == "chat_reply" for event in follow_up_events)
+    follow_up_payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     assert len(follow_up_payload["messages"]) > len(payload["messages"])
     assert "business_code=A_DEMO" in follow_up_payload["messages"][-1]["content"]
+
+    summary_follow_up = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please summarize the report key points."},
+    )
+    assert summary_follow_up.status_code == 200
+    summary_events = consume_sse(client, summary_follow_up.json()["stream_url"])
+    assert any(event["event"] == "chat_reply" for event in summary_events)
+    summary_payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
+    summary_message = summary_payload["messages"][-1]
+    assert "Summary for A_DEMO:" in summary_message["content"]
+    assert summary_message["metadata"]["summary_only"] is True
+    assert summary_message["metadata"]["report_preview"].startswith("# ")
+
+
+def test_agent_session_database_demo_flow(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    start_payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use database data to generate a scientific plot and report for A_DEMO."},
+    ).json()
+    events = consume_sse(client, start_payload["stream_url"])
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
+
+    assert any(event["event"] == "tool_called" for event in events)
+    assert payload["tasks"]
+    assert payload["tasks"][0]["task_type"] == "db_analysis"
+    run = payload["runs"][0]
+    assert run["steps"][0]["tool_name"] == "run_db_analysis_workflow"
+    result_message = next(
+        msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
+    )
+    assert "scientific_plot" in result_message["content"]
+
+
+def test_agent_session_chat_message_does_not_trigger_plan_or_tool(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    start_payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "你好"},
+    ).json()
+    events = consume_sse(client, start_payload["stream_url"])
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
+
+    assert not any(msg["message_type"] == "plan" for msg in payload["messages"])
+    assert not any(msg["message_type"] == "tool_call" for msg in payload["messages"])
+    assert payload["tasks"] == []
+    assert any(event["event"] == "chat_reply" for event in events)
+    assert not any(event["event"] == "tool_called" for event in events)
+    assert "你好" in payload["messages"][-1]["content"] or "A_DEMO" in payload["messages"][-1]["content"]
 
 
 def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
@@ -253,10 +363,12 @@ def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
-    payload = client.post(
+    start_payload = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
         json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
     ).json()
+    consume_sse(client, start_payload["stream_url"])
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     task_with_result = next(task for task in payload["tasks"] if task["status"] == "succeeded")
     task_detail = client.get(f"/api/v1/tasks/{task_with_result['task_id']}").json()
     report_artifact = next(
@@ -334,15 +446,93 @@ def test_agent_session_uses_llm_mode_with_fallback_parser(tmp_path: Path) -> Non
         model="demo-model",
         fallback_parser=agent_session_service.intent_parser,
     )
+    agent_session_service.planner = LLMPlanner(
+        provider=GLMProvider(
+            base_url="https://glm.example.com/v1",
+            api_key="secret",
+            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"goal":"Please analyze A_DEMO with the model.",'
+                                    '"steps":['
+                                    '{"step_index":0,"title":"Run file analysis workflow for A_DEMO",'
+                                    '"tool_name":"run_file_analysis_workflow","inputs_summary":{"business_code":"A_DEMO"}},'
+                                    '{"step_index":1,"title":"Summarize workflow results for the user",'
+                                    '"tool_name":"summarize_session_results","inputs_summary":{"goal":"Please analyze A_DEMO with the model."}}'
+                                    '],'
+                                    '"planner_source":"llm","used_fallback":false}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ),
+        ),
+        model="demo-model",
+        timeout=30.0,
+        fallback_planner=FakePlanner(),
+    )
     app = create_api_app(task_service, agent_session_service)
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
-    payload = client.post(
+    start_payload = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
         json={"content": "Please analyze A_DEMO with the model."},
     ).json()
+    events = consume_sse(client, start_payload["stream_url"])
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
 
     plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
     assert plan_message["metadata"]["intent_mode"] == "llm"
     assert plan_message["metadata"]["intent_source"] == "llm"
+    assert payload["runs"][0]["metadata"]["planner_source"] in {"llm", "llm_fallback"}
+    assert any(event["event"] == "plan_created" for event in events)
+
+
+def test_agent_session_forces_task_candidate_back_to_analysis_when_llm_misclassifies(tmp_path: Path) -> None:
+    settings = Settings(
+        artifact_base_dir=str(tmp_path / "artifacts"),
+        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+    )
+    webui, task_service, agent_session_service = build_components(settings)
+    del webui
+    agent_session_service.intent_parser = LLMIntentParser(
+        provider=GLMProvider(
+            base_url="https://glm.example.com/v1",
+            api_key="secret",
+            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"action":"show_report","objective":"Please use A_DEMO file data to generate a scientific plot and report."}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ),
+        ),
+        model="demo-model",
+        fallback_parser=agent_session_service.intent_parser,
+    )
+    app = create_api_app(task_service, agent_session_service)
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    start_payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+    ).json()
+    events = consume_sse(client, start_payload["stream_url"])
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
+
+    assert any(msg["message_type"] == "plan" for msg in payload["messages"])
+    assert payload["tasks"]
+    assert payload["runs"]
+    assert any(event["event"] == "tool_called" for event in events)

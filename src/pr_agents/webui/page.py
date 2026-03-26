@@ -259,6 +259,74 @@ def render_agent_demo_page(intent_mode: str) -> str:
       line-height: 1.5;
       word-break: break-word;
     }
+    .run-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .run-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.84);
+      padding: 16px 18px;
+      box-shadow: 0 10px 24px rgba(22, 18, 14, 0.04);
+    }
+    .run-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .run-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .run-status {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .run-summary {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+    .step-list {
+      display: grid;
+      gap: 8px;
+    }
+    .step-item {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: var(--system);
+    }
+    .step-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .step-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .step-status {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .step-body {
+      font-size: 13px;
+      color: var(--ink);
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
     .composer-shell {
       padding: 16px 24px 22px;
       border-top: 1px solid rgba(230, 224, 215, 0.75);
@@ -346,11 +414,12 @@ def render_agent_demo_page(intent_mode: str) -> str:
     <aside class="sidebar">
       <div class="brand">
         <h1>pr_agents</h1>
-        <p>Chat with the analysis agent instead of filling backend parameters by hand.</p>
+        <p>Run two official agent demos: one from a source file, one from cleaned database data.</p>
       </div>
       <div class="sidebar-actions">
         <button class="button primary" id="new-session">New chat</button>
-        <button class="button ghost" id="run-demo">Run A_DEMO</button>
+        <button class="button ghost" id="run-file-demo">Run File Demo</button>
+        <button class="button ghost" id="run-db-demo">Run DB Demo</button>
       </div>
       <section class="sidebar-section">
         <div class="sidebar-title">Conversations</div>
@@ -360,26 +429,28 @@ def render_agent_demo_page(intent_mode: str) -> str:
     <main class="main">
       <header class="topbar">
         <h2>Agent Workspace</h2>
-        <p id="session-title">Start a conversation and ask the agent to analyze demo data.</p>
+        <p id="session-title">Start with the file demo or the database demo, then ask for the report or its key points.</p>
         <div class="topbar-mode">Intent mode: <strong>""" + intent_mode + """</strong></div>
       </header>
       <section class="conversation" id="conversation">
         <div class="conversation-inner" id="messages">
           <div class="empty">
-            Use the chat composer below or click <strong>Run A_DEMO</strong>.
-            The agent will explain its plan, execute a tool, and return a report in the same conversation.
+            Start with <strong>Run File Demo</strong> or <strong>Run DB Demo</strong>.
+            The agent will reply directly for normal conversation, and create a task plan only when you ask it to run one of the official demos.
           </div>
         </div>
       </section>
       <footer class="composer-shell">
         <div class="composer">
-          <p class="composer-hint">Try: Please use A_DEMO file data to generate a scientific plot and report.</p>
+          <p class="composer-hint">Try the file demo, the database demo, or ask for the latest report summary.</p>
           <textarea id="prompt" placeholder="Message the agent. Press Enter to send, Shift+Enter for a new line."></textarea>
           <div class="composer-footer">
             <div>
               <div class="quick-actions">
-                <button class="chip" id="demo-chip">Run A_DEMO</button>
+                <button class="chip" id="file-demo-chip">Run File Demo</button>
+                <button class="chip" id="db-demo-chip">Run DB Demo</button>
                 <button class="chip" id="report-chip">Show latest report</button>
+                <button class="chip" id="summary-chip">Summarize report</button>
               </div>
               <div class="status" id="status">Creating session...</div>
             </div>
@@ -394,6 +465,7 @@ def render_agent_demo_page(intent_mode: str) -> str:
     const ACTIVE_SESSION_KEY = 'pr_agents_active_session';
     let sessionId = null;
     let sessions = [];
+    let activeStream = null;
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>"]/g, function (ch) {
@@ -460,37 +532,60 @@ def render_agent_demo_page(intent_mode: str) -> str:
       });
     }
 
-    function renderMessages(messages) {
+    function buildRunMap(runs) {
+      const map = {};
+      (runs || []).forEach(function (run) {
+        map[run.run_id] = run;
+      });
+      return map;
+    }
+
+    function renderRunDetails(run, message) {
+      if (!run || !run.steps || !run.steps.length) {
+        return '';
+      }
+      const summary = run.summary || ('Planner: ' + (run.metadata && run.metadata.planner_source ? run.metadata.planner_source : 'n/a'));
+      const steps = run.steps.map(function (step) {
+        const observation = step.error_summary && Object.keys(step.error_summary).length
+          ? (step.error_summary.message || JSON.stringify(step.error_summary))
+          : (step.observation_summary.summary || step.observation_summary.report_summary || step.observation_summary.task_status || '');
+        return '<div class="step-item">' +
+          '<div class="step-head"><span class="step-title">' + escapeHtml(step.title) + '</span><span class="step-status">' + escapeHtml(step.status) + '</span></div>' +
+          '<div class="step-body">' + escapeHtml(observation || step.tool_name) + '</div>' +
+        '</div>';
+      }).join('');
+      const reportPreview = message.metadata && message.metadata.report_preview
+        ? '<div class="step-item"><div class="step-head"><span class="step-title">Report preview</span><span class="step-status">artifact</span></div><div class="step-body">' + escapeHtml(message.metadata.report_preview) + '</div></div>'
+        : '';
+      return '<details class="detail-card">' +
+        '<summary><span>Task details</span><span>' + escapeHtml(run.status + ' · ' + summary) + '</span></summary>' +
+        '<div class="detail-body">' +
+          '<div class="detail-line">Goal: ' + escapeHtml(run.goal) + '</div>' +
+          '<div class="detail-line">Status: ' + escapeHtml(run.status) + '</div>' +
+          '<div class="step-list">' + steps + reportPreview + '</div>' +
+        '</div>' +
+      '</details>';
+    }
+
+    function renderMessages(messages, runs) {
       const container = document.getElementById('messages');
       if (!messages.length) {
-        container.innerHTML = '<div class="empty">Start with a prompt or click <strong>Run A_DEMO</strong>.</div>';
+        container.innerHTML = '<div class="empty">Start with <strong>Run File Demo</strong>, <strong>Run DB Demo</strong>, or ask for the latest report.</div>';
         return;
       }
-      container.innerHTML = messages.map(function (message) {
-        if (message.message_type === 'plan' || message.message_type === 'tool_call' || message.message_type === 'tool_result') {
-          const title = message.message_type === 'plan'
-            ? 'Execution plan'
-            : (message.message_type === 'tool_call' ? 'Tool call' : 'Tool result');
-          const metadataLines = [];
-          if (message.metadata && message.metadata.task_id) metadataLines.push('task=' + message.metadata.task_id);
-          if (message.metadata && message.metadata.chart_type) metadataLines.push('chart=' + message.metadata.chart_type);
-          if (message.metadata && message.metadata.business_code) metadataLines.push('business=' + message.metadata.business_code);
-          return '<div class="message-row tool">' +
-            '<details class="detail-card"' + (message.message_type === 'plan' ? ' open' : '') + '>' +
-            '<summary><span>' + escapeHtml(title) + '</span><span>' + escapeHtml(metadataLines.join(' · ') || 'details') + '</span></summary>' +
-            '<div class="detail-body">' +
-              '<div class="detail-line">' + escapeHtml(message.content) + '</div>' +
-            '</div>' +
-            '</details>' +
-          '</div>';
-        }
-
+      const runMap = buildRunMap(runs);
+      container.innerHTML = messages.filter(function (message) {
+        return !['plan', 'tool_call', 'tool_result'].includes(message.message_type);
+      }).map(function (message) {
         const roleLabel = message.role === 'user' ? 'You' : 'Agent';
+        const runDetails = message.role === 'assistant' && message.metadata && message.metadata.run_id
+          ? renderRunDetails(runMap[message.metadata.run_id], message)
+          : '';
         return '<div class="message-row ' + message.role + '">' +
           '<article class="message-card">' +
             '<div class="message-label">' + escapeHtml(roleLabel) + '</div>' +
             '<div class="message-content">' + escapeHtml(message.content) + '</div>' +
-          '</article>' +
+          '</article>' + runDetails +
         '</div>';
       }).join('');
       const conversation = document.getElementById('conversation');
@@ -524,7 +619,7 @@ def render_agent_demo_page(intent_mode: str) -> str:
       saveActiveSession();
       upsertSessionMeta(sessionId, title);
       document.getElementById('session-title').textContent = title + ' · ' + sessionId;
-      renderMessages(payload.messages);
+      renderMessages(payload.messages, payload.runs || []);
       document.getElementById('status').textContent = 'Ready.';
     }
 
@@ -535,7 +630,11 @@ def render_agent_demo_page(intent_mode: str) -> str:
       if (!sessionId) {
         await createSession();
       }
-      document.getElementById('status').textContent = 'Agent is thinking...';
+      if (activeStream) {
+        activeStream.close();
+        activeStream = null;
+      }
+      document.getElementById('status').textContent = 'Queued...';
       document.getElementById('send-message').disabled = true;
       const response = await fetch('/api/v1/agent/sessions/' + sessionId + '/messages', {
         method: 'POST',
@@ -543,14 +642,77 @@ def render_agent_demo_page(intent_mode: str) -> str:
         body: JSON.stringify({ content: trimmed })
       });
       const payload = await response.json();
-      const title = deriveTitle(payload.messages);
-      upsertSessionMeta(sessionId, title);
-      document.getElementById('session-title').textContent = title + ' · ' + sessionId;
-      renderMessages(payload.messages);
-      document.getElementById('status').textContent = 'Completed.';
-      document.getElementById('send-message').disabled = false;
+      await refreshSession();
       prompt.value = '';
       prompt.focus();
+      const stream = new EventSource(payload.stream_url);
+      activeStream = stream;
+
+      function complete(statusText) {
+        document.getElementById('status').textContent = statusText;
+        document.getElementById('send-message').disabled = false;
+        stream.close();
+        if (activeStream === stream) activeStream = null;
+      }
+
+      async function handleEvent(statusText) {
+        document.getElementById('status').textContent = statusText;
+        await refreshSession();
+      }
+
+      stream.addEventListener('run_started', async function () {
+        await handleEvent('Queued...');
+      });
+      stream.addEventListener('routing_started', async function () {
+        await handleEvent('Routing...');
+      });
+      stream.addEventListener('fast_path_selected', async function () {
+        await handleEvent('Fast path selected...');
+      });
+      stream.addEventListener('planning_started', async function () {
+        await handleEvent('Planning...');
+      });
+      stream.addEventListener('chat_reply', async function () {
+        await handleEvent('Reply received.');
+      });
+      stream.addEventListener('plan_created', async function () {
+        await handleEvent('Plan created.');
+      });
+      stream.addEventListener('step_started', async function () {
+        await handleEvent('Running step...');
+      });
+      stream.addEventListener('tool_called', async function () {
+        await handleEvent('Calling tool...');
+      });
+      stream.addEventListener('tool_result', async function () {
+        await handleEvent('Tool returned.');
+      });
+      stream.addEventListener('step_completed', async function () {
+        await handleEvent('Step completed.');
+      });
+      stream.addEventListener('step_failed', async function () {
+        await handleEvent('Step failed.');
+      });
+      stream.addEventListener('run_completed', async function () {
+        await refreshSession();
+        complete('Completed.');
+      });
+      stream.addEventListener('run_failed', async function () {
+        await refreshSession();
+        complete('Failed.');
+      });
+      stream.addEventListener('session_snapshot', async function () {
+        await refreshSession();
+      });
+      stream.addEventListener('keepalive', function () {
+        if (document.getElementById('send-message').disabled) {
+          complete('Completed.');
+        }
+      });
+      stream.onerror = async function () {
+        await refreshSession();
+        complete('Stream disconnected.');
+      };
     }
 
     function fillPrompt(value) {
@@ -563,18 +725,32 @@ def render_agent_demo_page(intent_mode: str) -> str:
       await createSession();
     });
 
-    document.getElementById('run-demo').addEventListener('click', async function () {
+    document.getElementById('run-file-demo').addEventListener('click', async function () {
       const prompt = 'Please use A_DEMO file data to generate a scientific plot and report.';
       fillPrompt(prompt);
       await sendMessage(prompt);
     });
 
-    document.getElementById('demo-chip').addEventListener('click', function () {
+    document.getElementById('run-db-demo').addEventListener('click', async function () {
+      const prompt = 'Please use database data to generate a scientific plot and report for A_DEMO.';
+      fillPrompt(prompt);
+      await sendMessage(prompt);
+    });
+
+    document.getElementById('file-demo-chip').addEventListener('click', function () {
       fillPrompt('Please use A_DEMO file data to generate a scientific plot and report.');
+    });
+
+    document.getElementById('db-demo-chip').addEventListener('click', function () {
+      fillPrompt('Please use database data to generate a scientific plot and report for A_DEMO.');
     });
 
     document.getElementById('report-chip').addEventListener('click', function () {
       fillPrompt('Show me the report again.');
+    });
+
+    document.getElementById('summary-chip').addEventListener('click', function () {
+      fillPrompt('Please summarize the report key points.');
     });
 
     document.getElementById('send-message').addEventListener('click', async function () {

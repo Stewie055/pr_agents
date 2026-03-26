@@ -43,6 +43,14 @@ class FakeIntentParser:
         upper = normalized.upper()
         lower = normalized.lower()
 
+        if self._is_chat_message(normalized, lower):
+            return AgentIntent(
+                action=AgentAction.CHAT,
+                objective=normalized or "Start a conversation",
+                intent_source=self.mode.value,
+                used_fallback=False,
+            )
+
         if self._is_report_follow_up(normalized):
             return AgentIntent(
                 action=AgentAction.SHOW_REPORT,
@@ -100,9 +108,21 @@ class FakeIntentParser:
             or "show the report again" in lower
             or "report again" in lower
             or "show latest report" in lower
+            or "summarize the report" in lower
+            or "summarise the report" in lower
+            or "report summary" in lower
+            or "key points" in lower
             or "再看报告" in content
             or "重新看报告" in content
+            or "概括这份报告" in content
+            or "总结这份报告" in content
+            or "报告重点" in content
         )
+
+    @staticmethod
+    def _is_chat_message(content: str, lower: str) -> bool:
+        greetings = {"hi", "hello", "hey", "你好", "您好", "嗨", "在吗", "你是谁", "你能做什么", "怎么用", "help"}
+        return lower in greetings or content in greetings
 
 
 Requester = Callable[[str, dict[str, Any], dict[str, str], float], str]
@@ -206,9 +226,10 @@ class LLMIntentParser:
     def _system_prompt() -> str:
         return (
             "Return valid JSON only with fields action, business_code, entry, objective, "
-            "chart_type, source_pattern. Allowed action: analyze, show_report. "
+            "chart_type, source_pattern. Allowed action: chat, analyze, show_report. "
             "Allowed business_code: A_DEMO, B001. Allowed entry: file, database. "
-            "Allowed chart_type: scientific_plot. Allowed source_pattern: per_business_file, shared_file."
+            "Allowed chart_type: scientific_plot. Allowed source_pattern: per_business_file, shared_file. "
+            "If the user is greeting, asking who you are, or asking how to use the agent, return action=chat."
         )
 
     @staticmethod

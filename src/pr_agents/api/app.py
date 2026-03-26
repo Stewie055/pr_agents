@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.models import (
@@ -66,7 +66,15 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
 
     @app.post("/api/v1/agent/sessions/{session_id}/messages")
     def send_agent_message(session_id: str, request: AgentUserMessageRequest):
-        return agent_session_service.handle_message(session_id, request)
+        return agent_session_service.start_message_run(session_id, request)
+
+    @app.get("/api/v1/agent/sessions/{session_id}/runs/{run_id}/stream")
+    def stream_agent_run(session_id: str, run_id: str):
+        return StreamingResponse(
+            agent_session_service.iter_formatted_sse(session_id, run_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
 
     @app.get("/api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content")
     def read_agent_session_artifact_content(session_id: str, artifact_id: str):

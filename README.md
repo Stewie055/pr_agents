@@ -40,7 +40,10 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 ## Run Demo
 
-仓库内置了一条官方 demo：A 类文件业务 `A_DEMO`，输出科学绘图和报告。
+仓库内置两条官方 demo，默认都围绕 `A_DEMO` 展示科学绘图和报告：
+
+- 文件主线：从原始文件入口触发分析
+- 数据库主线：从清洗后数据库入口触发分析
 
 样例数据见：
 
@@ -52,16 +55,25 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 ## WebUI Demo
 
-现在默认用户入口是聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。
+现在默认用户入口是聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。对外展示时，推荐使用 `llm` 模式启动。
 
 - 打开 `http://<机器IP>:8000/`
 - 左侧是会话列表和 `New chat`
 - 右侧是聊天消息流，输入框固定在底部
-- 点击 `Run A_DEMO`
-- 页面会展示 Agent 计划、工具调用、任务结果和报告正文，但过程信息以次级执行卡片呈现
+- 点击 `Run File Demo` 或 `Run DB Demo`
+- 页面默认只展示用户消息和 Agent 最终回复
+- 任务执行细节会折叠在 assistant 回复下方的 `Task details` 中，而不是单独堆叠 plan/tool/run 卡片
+- 报告正文默认放在 `Task details` 的 `Report preview` 中，避免和最终回复重复
+- 可以继续追问：
+  - `Show me the report again.`
+  - `Please summarize the report key points.`
 - 页面刷新后会优先恢复上一次活动会话
 - 最近任务的结果快照会持久化到 SQLite，服务重启后仍可查询
 - 顶部会显示当前 `Intent mode`：`fake` 或 `llm`
+- 普通聊天默认不调用工具；只有明确任务请求才进入计划和执行
+- 只有任务型请求会显示运行轨迹卡；普通聊天不再重复显示 run 摘要
+- WebUI 现在通过 `SSE` 流式接收 Agent 事件，不再等整包 JSON 返回后一次性刷新
+- 明确任务请求会优先走本地 fast-path，提前显示 `Queued / Routing / Planning` 状态，减少长时间无反馈
 
 如果需要调试底层接口，再访问：
 
@@ -72,15 +84,45 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 当前支持两种意图解析模式：
 
 - `fake`
-  默认模式。适合你在接真实业务 `Service` 时先稳定调通流程。
+  开发与业务适配模式。适合你在接真实业务 `Service` 时先稳定调通流程。
 - `llm`
-  使用 GLM 官方 API 的 provider 适配层解析自然语言；若失败会自动回退到 `fake`。
+  对外 demo 推荐模式。使用 GLM 官方 API 的 provider 适配层解析自然语言；若失败会自动回退到 `fake`。
 
 当前默认 LLM provider 为 `glm`，默认模型为 `GLM-4.5-Air`。为便于后续把代码拷贝到另一个局域网继续适配：
 
 - API key 只从环境变量读取，不写进仓库
 - provider HTTP 调用被封装在独立适配层里
 - 后续若切换到别的模型或局域网代理，只需要替换配置或 provider 实现，不需要重写 Agent 主链路
+
+## Agent Runtime
+
+当前 Agent 已从“意图分类后直接调 workflow”升级为“对话路由 + Planner + Executor”：
+
+- 普通聊天：
+  直接回复，不创建 task，不调用 tool
+- 会话内报告追问：
+  直接读取最近报告
+- 明确任务请求：
+  先生成结构化计划，再按步骤执行 workflow-level tools，并把轨迹保存为 run/step
+
+## Streaming
+
+当前 WebUI 的消息发送链路是：
+
+1. `POST /api/v1/agent/sessions/{session_id}/messages`
+   创建一次新的 run
+2. `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream`
+   通过 `SSE` 接收：
+   - `run_started`
+   - `chat_reply`
+   - `plan_created`
+   - `step_started`
+   - `tool_called`
+   - `tool_result`
+   - `step_completed`
+   - `run_completed` / `run_failed`
+
+因此普通聊天会很快返回，任务型请求会逐步显示计划和执行轨迹。
 
 相关环境变量：
 

@@ -31,6 +31,20 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class AgentRunStatus(str, Enum):
+    PLANNED = "planned"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class AgentStepStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -46,6 +60,7 @@ class MessageType(str, Enum):
 
 
 class AgentAction(str, Enum):
+    CHAT = "chat"
     ANALYZE = "analyze"
     SHOW_REPORT = "show_report"
 
@@ -283,10 +298,40 @@ class AgentMessage(BaseModel):
     created_at: str
 
 
+class AgentPlanStep(BaseModel):
+    step_id: str
+    run_id: str
+    step_index: int
+    title: str
+    tool_name: str
+    status: AgentStepStatus
+    inputs_summary: dict[str, Any] = Field(default_factory=dict)
+    observation_summary: dict[str, Any] = Field(default_factory=dict)
+    error_summary: dict[str, Any] = Field(default_factory=dict)
+    task_id: str | None = None
+    artifact_ids: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class AgentRun(BaseModel):
+    run_id: str
+    session_id: str
+    goal: str
+    status: AgentRunStatus
+    summary: str = ""
+    intent_mode: str = IntentMode.FAKE.value
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    steps: list[AgentPlanStep] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
 class AgentSessionResponse(BaseModel):
     session_id: str
     messages: list[AgentMessage] = Field(default_factory=list)
     tasks: list[TaskRecord] = Field(default_factory=list)
+    runs: list[AgentRun] = Field(default_factory=list)
 
 
 class CreateAgentSessionResponse(BaseModel):
@@ -297,10 +342,26 @@ class AgentUserMessageRequest(BaseModel):
     content: str
 
 
+class AgentMessageStartResponse(BaseModel):
+    session_id: str
+    run_id: str
+    message_id: str
+    stream_url: str
+
+
+class AgentStreamEvent(BaseModel):
+    event_id: str = Field(default_factory=lambda: f"evt-{uuid4().hex[:8]}")
+    event: str
+    session_id: str
+    run_id: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    timestamp: str
+
+
 class AgentIntent(BaseModel):
     action: AgentAction
-    business_code: str
-    entry: AgentEntry
+    business_code: str = "A_DEMO"
+    entry: AgentEntry = AgentEntry.FILE
     objective: str
     chart_type: str = "scientific_plot"
     source_pattern: SourcePattern = SourcePattern.PER_BUSINESS_FILE

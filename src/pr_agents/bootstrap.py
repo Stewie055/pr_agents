@@ -4,7 +4,13 @@ from fastapi import FastAPI
 
 from pr_agents.api import create_api_app
 from pr_agents.agent.intents import FakeIntentParser, GLMProvider, LLMIntentParser
-from pr_agents.agent import AgentDependencies, AnalysisOrchestrator
+from pr_agents.agent import (
+    AgentDependencies,
+    AnalysisOrchestrator,
+    ConversationRouter,
+    FakePlanner,
+    LLMPlanner,
+)
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.infrastructure import ArtifactStore
 from pr_agents.infrastructure.sqlite import AgentSessionRepository, ArtifactRepository, TaskRepository
@@ -37,6 +43,8 @@ def build_components(
         artifact_repository=ArtifactRepository(settings.sqlite_path),
     )
     fake_intent_parser = FakeIntentParser()
+    router = ConversationRouter()
+    fake_planner = FakePlanner()
     if settings.intent_mode.value == "llm":
         if settings.llm_provider.value != "glm":
             raise ValueError(f"unsupported llm provider: {settings.llm_provider.value}")
@@ -50,13 +58,22 @@ def build_components(
             timeout=settings.llm_timeout,
             fallback_parser=fake_intent_parser,
         )
+        planner = LLMPlanner(
+            provider=provider,
+            model=settings.llm_model,
+            timeout=settings.llm_timeout,
+            fallback_planner=fake_planner,
+        )
     else:
         intent_parser = fake_intent_parser
+        planner = fake_planner
     agent_session_service = AgentSessionService(
         session_repository=AgentSessionRepository(settings.sqlite_path),
         task_service=task_service,
         demo_data_path="examples/demo_a.csv",
         intent_parser=intent_parser,
+        router=router,
+        planner=planner,
     )
     return WebUIFacade(orchestrator), task_service, agent_session_service
 
