@@ -18,6 +18,7 @@ def test_file_analysis_api_and_task_queries(tmp_path: Path) -> None:
     response = client.post(
         "/api/v1/tasks/file-analysis",
         json={
+            "business_code": "A001",
             "objective": "prepare report",
             "file_name": "demo.csv",
             "content": "a,b\n1,2\n",
@@ -33,6 +34,7 @@ def test_file_analysis_api_and_task_queries(tmp_path: Path) -> None:
     assert task_response.status_code == 200
     task_payload = task_response.json()
     assert task_payload["task"]["status"] == "succeeded"
+    assert task_payload["task"]["input_summary"]["business_code"] == "A001"
     assert len(task_payload["artifacts"]) == 3
 
     session_response = client.get(f"/api/v1/sessions/{session_id}/tasks")
@@ -72,6 +74,7 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
     response = client.post(
         "/api/v1/tasks/file-analysis",
         json={
+            "business_code": "A001",
             "objective": "prepare report",
             "file_name": "demo.csv",
             "content": "a,b\n1,2\n",
@@ -105,3 +108,31 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
 
     unsupported = client.get(f"/api/v1/artifacts/{artifact_id}/content")
     assert unsupported.status_code == 415
+
+
+def test_shared_file_business_mode_and_scientific_plot(tmp_path: Path) -> None:
+    app = build_api_app(
+        Settings(
+            artifact_base_dir=str(tmp_path / "artifacts"),
+            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/tasks/file-analysis",
+        json={
+            "business_code": "B001",
+            "objective": "prepare scientific report",
+            "file_name": "shared.csv",
+            "content": "business_code,value\nB001,1\nB002,2\nB001,3\n",
+            "source_profile": {"source_pattern": "shared_file"},
+            "chart_profile": {"chart_type": "scientific_plot"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result"]["dataset"]["row_count"] == 2
+    assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
+    assert payload["result"]["dataset"]["metadata"]["business_code"] == "B001"

@@ -13,6 +13,11 @@ class DataSourceType(str, Enum):
     DATABASE = "database"
 
 
+class SourcePattern(str, Enum):
+    PER_BUSINESS_FILE = "per_business_file"
+    SHARED_FILE = "shared_file"
+
+
 class ArtifactType(str, Enum):
     DATASET = "dataset"
     CHART = "chart"
@@ -56,10 +61,17 @@ class DatasetRef(BaseModel):
 
 
 class AnalysisRequest(BaseModel):
+    business_code: str
     objective: str
     dataset_id: str | None = None
     operations: list[str] = Field(default_factory=list)
     output_formats: list[str] = Field(default_factory=lambda: ["png", "md"])
+    source_mode: DataSourceType | None = None
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    clean_profile: dict[str, Any] = Field(default_factory=dict)
+    analysis_profile: dict[str, Any] = Field(default_factory=dict)
+    chart_profile: dict[str, Any] = Field(default_factory=dict)
+    report_profile: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -145,40 +157,68 @@ class ArtifactRecord(BaseModel):
 
 
 class FileAnalysisInput(BaseModel):
+    business_code: str
     file_name: str
     content: str
     objective: str
+    source_mode: DataSourceType = DataSourceType.FILE
     operations: list[str] = Field(default_factory=lambda: ["clean", "analyze", "visualize", "report"])
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    clean_profile: dict[str, Any] = Field(default_factory=dict)
+    analysis_profile: dict[str, Any] = Field(default_factory=dict)
+    chart_profile: dict[str, Any] = Field(default_factory=dict)
+    report_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class DatabaseAnalysisInput(BaseModel):
+    business_code: str
     query_name: str
     objective: str
     sql: str
+    source_mode: DataSourceType = DataSourceType.DATABASE
     operations: list[str] = Field(default_factory=lambda: ["clean", "analyze", "visualize", "report"])
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    clean_profile: dict[str, Any] = Field(default_factory=dict)
+    analysis_profile: dict[str, Any] = Field(default_factory=dict)
+    chart_profile: dict[str, Any] = Field(default_factory=dict)
+    report_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReportGenerationInput(BaseModel):
+    business_code: str
     objective: str
     dataset: DatasetRef | None = None
     analysis: AnalysisResult
     chart: ChartArtifact | None = None
+    report_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class FileAnalysisRequest(BaseModel):
+    business_code: str
     objective: str
     file_name: str
     content: str
     operations: list[str] = Field(default_factory=lambda: ["clean", "analyze", "visualize", "report"])
     session_id: str | None = None
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    clean_profile: dict[str, Any] = Field(default_factory=dict)
+    analysis_profile: dict[str, Any] = Field(default_factory=dict)
+    chart_profile: dict[str, Any] = Field(default_factory=dict)
+    report_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class DatabaseAnalysisRequest(BaseModel):
+    business_code: str
     objective: str
     query_name: str
     sql: str
     operations: list[str] = Field(default_factory=lambda: ["clean", "analyze", "visualize", "report"])
     session_id: str | None = None
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    clean_profile: dict[str, Any] = Field(default_factory=dict)
+    analysis_profile: dict[str, Any] = Field(default_factory=dict)
+    chart_profile: dict[str, Any] = Field(default_factory=dict)
+    report_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskResponse(BaseModel):

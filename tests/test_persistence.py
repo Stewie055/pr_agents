@@ -29,13 +29,19 @@ def build_task_service(tmp_path: Path) -> TaskApplicationService:
 def test_task_service_persists_task_and_artifacts(tmp_path: Path) -> None:
     service = build_task_service(tmp_path)
     response = service.submit_file_analysis(
-        FileAnalysisRequest(objective="persist", file_name="demo.csv", content="a,b\n1,2\n")
+        FileAnalysisRequest(
+            business_code="A001",
+            objective="persist",
+            file_name="demo.csv",
+            content="a,b\n1,2\n",
+        )
     )
 
     assert response.status.value == "succeeded"
     detail = service.get_task(response.task_id)
     assert detail is not None
     assert detail.task.status.value == "succeeded"
+    assert detail.task.input_summary["business_code"] == "A001"
     assert len(detail.artifacts) == 3
 
 
@@ -52,7 +58,12 @@ def test_task_service_marks_failures(tmp_path: Path) -> None:
     )
 
     response = service.submit_file_analysis(
-        FileAnalysisRequest(objective="fail", file_name="demo.csv", content="a,b\n1,2\n")
+        FileAnalysisRequest(
+            business_code="A001",
+            objective="fail",
+            file_name="demo.csv",
+            content="a,b\n1,2\n",
+        )
     )
 
     assert response.status.value == "failed"

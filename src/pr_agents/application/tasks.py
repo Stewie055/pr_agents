@@ -40,17 +40,27 @@ class TaskApplicationService:
             session_id=context.session_id,
             task_type="file_analysis",
             objective=request.objective,
-            input_summary={"file_name": request.file_name, "operations": request.operations},
+            input_summary={
+                "business_code": request.business_code,
+                "file_name": request.file_name,
+                "operations": request.operations,
+            },
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
             result = self.orchestrator.route_task(
                 UserTask(
                     route="file_analysis",
+                    business_code=request.business_code,
                     objective=request.objective,
                     file_name=request.file_name,
                     content=request.content,
                     operations=request.operations,
+                    source_profile=request.source_profile,
+                    clean_profile=request.clean_profile,
+                    analysis_profile=request.analysis_profile,
+                    chart_profile=request.chart_profile,
+                    report_profile=request.report_profile,
                 ),
                 context=context,
             )
@@ -76,17 +86,27 @@ class TaskApplicationService:
             session_id=context.session_id,
             task_type="db_analysis",
             objective=request.objective,
-            input_summary={"query_name": request.query_name, "operations": request.operations},
+            input_summary={
+                "business_code": request.business_code,
+                "query_name": request.query_name,
+                "operations": request.operations,
+            },
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
             result = self.orchestrator.route_task(
                 UserTask(
                     route="db_analysis",
+                    business_code=request.business_code,
                     objective=request.objective,
                     query_name=request.query_name,
                     sql=request.sql,
                     operations=request.operations,
+                    source_profile=request.source_profile,
+                    clean_profile=request.clean_profile,
+                    analysis_profile=request.analysis_profile,
+                    chart_profile=request.chart_profile,
+                    report_profile=request.report_profile,
                 ),
                 context=context,
             )
@@ -176,6 +196,7 @@ class TaskApplicationService:
     def _build_result_summary(result: WorkflowResult) -> dict:
         return {
             "ok": result.ok,
+            "business_code": result.dataset.metadata.get("business_code") if result.dataset else None,
             "dataset_id": result.dataset.dataset_id if result.dataset else None,
             "chart_id": result.chart.chart_id if result.chart else None,
             "report_id": result.report.report_id if result.report else None,

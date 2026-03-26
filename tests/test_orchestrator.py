@@ -25,20 +25,34 @@ def build_orchestrator(tmp_path: Path) -> AnalysisOrchestrator:
 def test_orchestrator_routes_file_analysis(tmp_path: Path) -> None:
     orchestrator = build_orchestrator(tmp_path)
     result = orchestrator.route_task(
-        UserTask(route="file_analysis", objective="analyze file", file_name="demo.csv", content="a,b\n1,2\n")
+        UserTask(
+            route="file_analysis",
+            business_code="A001",
+            objective="analyze file",
+            file_name="demo.csv",
+            content="a,b\n1,2\n",
+        )
     )
 
     assert result.ok is True
     assert result.dataset is not None
     assert result.dataset.source_uri == "demo.csv"
+    assert result.dataset.metadata["business_code"] == "A001"
 
 
 def test_orchestrator_routes_db_analysis(tmp_path: Path) -> None:
     orchestrator = build_orchestrator(tmp_path)
     result = orchestrator.route_task(
-        UserTask(route="db_analysis", objective="analyze db", query_name="sales", sql="select * from sales")
+        UserTask(
+            route="db_analysis",
+            business_code="B001",
+            objective="analyze db",
+            query_name="sales",
+            sql="select * from sales",
+        )
     )
 
     assert result.ok is True
     assert result.dataset is not None
     assert result.dataset.source_uri == "sales"
+    assert result.dataset.metadata["business_code"] == "B001"

@@ -9,6 +9,7 @@ def test_webui_facade_runs_end_to_end(tmp_path: Path) -> None:
     result = app.submit(
         UserTask(
             route="file_analysis",
+            business_code="A001",
             objective="prepare report",
             file_name="sample.csv",
             content="a,b\n1,2\n3,4\n",

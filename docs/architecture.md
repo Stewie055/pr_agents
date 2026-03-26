@@ -24,7 +24,7 @@
 
 ### Service
 
-负责领域业务能力抽象，是人工接入 QT 能力的唯一入口。
+负责领域业务能力抽象，是人工接入 QT 能力的唯一入口。当前接口采用 `business_code` 驱动的通用模式，由具体实现决定业务属于 A 类还是 B 类。
 
 ### Infrastructure
 
@@ -37,3 +37,5 @@
 - Tool 不直接耦合 QT 实现。
 - 当前使用 stub 实现跑通闭环，后续替换为真实适配器。
 - 任务执行采用同步模式，但统一使用 `task_id` 和状态机模型，便于后续扩展异步执行。
+- A 类“单业务单文件”和 B 类“多业务共享文件”不拆成两套 API，只通过 `business_code` 和 `source_profile` 区分。
+- 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。

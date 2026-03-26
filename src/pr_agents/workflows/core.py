@@ -34,13 +34,26 @@ class FileAnalysisWorkflow(WorkflowBase):
     def run(self, context, payload: FileAnalysisInput) -> WorkflowResult:
         result = WorkflowResult(context=context)
         request = AnalysisRequest(
+            business_code=payload.business_code,
             objective=payload.objective,
             operations=payload.operations,
+            source_mode=payload.source_mode,
+            source_profile=payload.source_profile,
+            clean_profile=payload.clean_profile,
+            analysis_profile=payload.analysis_profile,
+            chart_profile=payload.chart_profile,
+            report_profile=payload.report_profile,
         )
 
         dataset = self._execute_step(
             "parse_file",
-            lambda: self.platform.parse_file(context, payload.file_name, payload.content),
+            lambda: self.platform.parse_file(
+                context,
+                payload.file_name,
+                payload.content,
+                payload.business_code,
+                payload.source_profile,
+            ),
             result,
         )
         if not dataset:
@@ -48,7 +61,13 @@ class FileAnalysisWorkflow(WorkflowBase):
 
         result.dataset = self._execute_step(
             "clean_data",
-            lambda: self.platform.clean_data(context, dataset, payload.operations),
+            lambda: self.platform.clean_data(
+                context,
+                dataset,
+                payload.operations,
+                payload.business_code,
+                payload.clean_profile,
+            ),
             result,
         )
         if not result.dataset:
@@ -93,13 +112,26 @@ class DatabaseAnalysisWorkflow(WorkflowBase):
     def run(self, context, payload: DatabaseAnalysisInput) -> WorkflowResult:
         result = WorkflowResult(context=context)
         request = AnalysisRequest(
+            business_code=payload.business_code,
             objective=payload.objective,
             operations=payload.operations,
+            source_mode=payload.source_mode,
+            source_profile=payload.source_profile,
+            clean_profile=payload.clean_profile,
+            analysis_profile=payload.analysis_profile,
+            chart_profile=payload.chart_profile,
+            report_profile=payload.report_profile,
         )
 
         dataset = self._execute_step(
             "query_database",
-            lambda: self.platform.query_database(context, payload.query_name, payload.sql),
+            lambda: self.platform.query_database(
+                context,
+                payload.query_name,
+                payload.sql,
+                payload.business_code,
+                payload.source_profile,
+            ),
             result,
         )
         if not dataset:
@@ -107,7 +139,13 @@ class DatabaseAnalysisWorkflow(WorkflowBase):
 
         result.dataset = self._execute_step(
             "clean_data",
-            lambda: self.platform.clean_data(context, dataset, payload.operations),
+            lambda: self.platform.clean_data(
+                context,
+                dataset,
+                payload.operations,
+                payload.business_code,
+                payload.clean_profile,
+            ),
             result,
         )
         if not result.dataset:
@@ -157,9 +195,12 @@ class ReportFromExistingArtifactsWorkflow(WorkflowBase):
             chart=payload.chart,
         )
         request = AnalysisRequest(
+            business_code=payload.business_code,
             objective=payload.objective,
             dataset_id=payload.dataset.dataset_id if payload.dataset else payload.analysis.dataset_id,
             operations=["report"],
+            report_profile=payload.report_profile,
+            analysis_profile=payload.analysis.metadata,
         )
         result.report = self._execute_step(
             "generate_report",

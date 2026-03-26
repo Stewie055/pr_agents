@@ -14,17 +14,38 @@ from pr_agents.models import (
 
 class DataIngestionService(ABC):
     @abstractmethod
-    def parse_file(self, context: TaskContext, file_name: str, content: str) -> DatasetRef:
+    def parse_file(
+        self,
+        context: TaskContext,
+        file_name: str,
+        content: str,
+        business_code: str,
+        source_profile: dict,
+    ) -> DatasetRef:
         raise NotImplementedError
 
     @abstractmethod
-    def query_database(self, context: TaskContext, query_name: str, sql: str) -> DatasetRef:
+    def query_database(
+        self,
+        context: TaskContext,
+        query_name: str,
+        sql: str,
+        business_code: str,
+        source_profile: dict,
+    ) -> DatasetRef:
         raise NotImplementedError
 
 
 class DataPreparationService(ABC):
     @abstractmethod
-    def clean_data(self, context: TaskContext, dataset: DatasetRef, operations: list[str]) -> DatasetRef:
+    def clean_data(
+        self,
+        context: TaskContext,
+        dataset: DatasetRef,
+        operations: list[str],
+        business_code: str,
+        clean_profile: dict,
+    ) -> DatasetRef:
         raise NotImplementedError
 
 

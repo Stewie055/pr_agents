@@ -9,6 +9,8 @@
 - WebUI 端到端闭环
 - API 提交、查询、artifact 读取
 - SQLite 持久化与失败状态流转
+- A 类单业务单文件和 B 类共享文件示例
+- `scientific_plot` 图表产物示例
 
 ## 运行
 
