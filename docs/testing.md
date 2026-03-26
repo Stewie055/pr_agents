@@ -15,11 +15,12 @@
 - Agent 会话 API、多轮追问和 WebUI 首页示例
 - 聊天式布局、会话列表和底部输入区示例
 - 服务重启后的任务结果恢复示例
-- Agent 意图解析示例
+- `FakeLLM` 与 `GLMProvider` 示例
 - fake / llm 双模切换与 fallback 示例
 - GLM provider 请求构造与 provider 未配置 fallback 示例
 - 普通聊天不触发工具的 session 示例
-- workflow-level planner 与 run/step 轨迹示例
+- `PlannerAgent` 与 `ReactAgent` 的 workflow-level 决策和 run/step 轨迹示例
+- `MemoryManager` 的最近任务与最近报告摘要示例
 - SSE run 启动、事件流顺序和 session 最终一致性示例
 - WebUI “最终回复优先 + 折叠 Task details” 展示示例
 - 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例

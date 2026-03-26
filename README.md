@@ -6,7 +6,7 @@
 
 - 六层分层骨架：`WebUI -> Agent Orchestration -> Tool -> Workflow -> Service -> Infrastructure`
 - 基于 Pydantic 的统一输入输出模型
-- 基于 PydanticAI 的最小 Agent/tool 封装
+- 基于 PydanticAI 的轻量 Agent/tool 封装
 - 可替换的 `Service` 接口与 stub 实现
 - 基于 `business_code` 的通用业务分派接口，覆盖 A/B 两类业务
 - 文件分析、数据库分析、补生成报告三条主工作流
@@ -79,14 +79,14 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 - `http://<机器IP>:8000/docs`
 
-## Intent Mode
+## Model Mode
 
-当前支持两种意图解析模式：
+当前支持两种模型模式：
 
 - `fake`
   开发与业务适配模式。适合你在接真实业务 `Service` 时先稳定调通流程。
 - `llm`
-  对外 demo 推荐模式。使用 GLM 官方 API 的 provider 适配层解析自然语言；若失败会自动回退到 `fake`。
+  对外 demo 推荐模式。使用 GLM 官方 API 的 provider 适配层驱动 Agent 决策；若失败会自动回退到 `fake`。
 
 当前默认 LLM provider 为 `glm`，默认模型为 `GLM-4.5-Air`。为便于后续把代码拷贝到另一个局域网继续适配：
 
@@ -96,14 +96,23 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 ## Agent Runtime
 
-当前 Agent 已从“意图分类后直接调 workflow”升级为“对话路由 + Planner + Executor”：
+当前 Agent Orchestration 已重构为单一 `AgentRuntime` 主入口。它不再先写死 `chat / report / task` 分支，而是：
 
-- 普通聊天：
-  直接回复，不创建 task，不调用 tool
-- 会话内报告追问：
-  直接读取最近报告
-- 明确任务请求：
-  先生成结构化计划，再按步骤执行 workflow-level tools，并把轨迹保存为 run/step
+- 通过 `ContextManager` 组装当前会话上下文
+- 通过 `Memory` 提供短期和中期记忆
+- 让 `ReactAgent` 基于 LLM 输出结构化决策
+- 在需要规划时，由 `ReactAgent` 内部调用 `PlannerAgent`
+- 仅允许调用 workflow-level tools
+- 通过 SSE 持续推送运行事件，并把 run/step/message/task/artifact 持久化到 SQLite
+
+当前模型由工厂在启动时注入：
+
+- `FakeLLM`
+  作为开发、回归测试和业务接入阶段的稳定模型
+- `GLMProvider`
+  作为真实模型 provider，当前默认模型为 `GLM-4.5-Air`
+
+`PydanticAI` 被保留在 Agent 内部，负责模型承接、结构化输出和 tool schema；领域业务仍然只在 `Workflow / Service`。
 
 ## Streaming
 

@@ -12,14 +12,18 @@
 
 ### Agent Orchestration
 
-负责根据用户意图选择 Tool 和组织参数，管理 session 和运行上下文。当前 Agent 运行时已拆为三段：
+负责管理 session、上下文、记忆、计划、执行和事件流。当前 Agent 运行时以单一 `AgentRuntime` 为主入口，内部由以下模块组成：
 
-- `Conversation Router`
-  快速区分普通聊天、报告追问和任务型请求
-- `Planner`
-  对任务型请求生成 workflow-level 结构化计划
-- `Executor`
-  按步骤执行 tool/workflow，记录观察结果并更新 run/step 状态
+- `AgentRuntime`
+  统一承接用户消息、上下文装配、agent 决策、tool 执行、SSE 事件和 SQLite 持久化
+- `ContextManager`
+  从 session、message、task、artifact 和 memory 组装 `AgentContext`
+- `Memory`
+  当前实现短期与中期记忆；长期知识与 RAG 作为后续扩展位，归属于 Memory
+- `PlannerAgent`
+  仅在需要规划时生成 workflow-level 结构化 plan
+- `ReactAgent`
+  作为主执行体，基于 LLM 输出结构化决策，决定直接回复还是调用某个 allowed tool
 - `Event Stream`
   将 run 生命周期、步骤状态和关键 tool 结果通过 SSE 推给前端
 
@@ -50,13 +54,14 @@
 - 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。
 - 用户 Demo 路径采用聊天式 Agent 会话：用户消息 -> Agent 计划 -> Tool 调用 -> 任务结果 -> 报告内容。
 - 官方 demo 当前包含两条主线：文件入口分析和数据库入口分析；两者共享同一套 Router / Planner / Executor / Workflow 链路。
-- 当前 Agent 会话层已抽出独立意图解析器，并将任务结果快照持久化到 SQLite 以支持重启恢复。
-- 当前意图解析器支持双模：
-  - `fake`：规则式稳定模式
-  - `llm`：通过 provider 适配层调用真实模型，当前默认 provider 为 `glm`，失败自动回退到 `fake`
-- GLM 官方 API 的 HTTP 调用被隔离在独立 provider 中，`AgentSessionService` 和任务执行链路不直接依赖供应商细节。
+- 当前 Agent 会话层已将任务结果快照持久化到 SQLite 以支持重启恢复。
+- 当前模型层支持双模：
+  - `fake`：规则式稳定模式，由 `FakeLLM` 提供
+  - `llm`：通过 `GLMProvider` 调用真实模型，失败自动回退到 `fake`
+- GLM 官方 API 的 HTTP 调用被隔离在独立 provider 中，`AgentSessionService` 和 `AgentRuntime` 不直接依赖供应商细节。
 - 默认模型配置为 `GLM-4.5-Air`，便于开发环境先验证自然语言理解；后续迁移到局域网环境时可只替换 provider 配置或实现。
-- 普通聊天默认不触发工具；只有任务型请求才创建 plan/run/step 并执行 workflow。
-- 第一版 Planner 粒度固定为 workflow-level，避免把领域逻辑推进 LLM。
+- 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 和子 Agent 只使用注入后的模型，不在上层散布分支。
+- `ReactAgent` 的结构化决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
+- 第一版 `PlannerAgent` 粒度固定为 workflow-level，避免把领域逻辑推进 LLM。
 - 前端发送消息时采用“POST 创建 run + GET SSE 订阅”模式，而不是等待整包 JSON 响应。
 - WebUI 展示层采用“最终回复优先”的聚合策略：`plan/tool/run` 轨迹默认收敛到 assistant 回复下方的折叠详情，而不是分别平铺到消息流中。

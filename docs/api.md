@@ -76,12 +76,12 @@
   - `Show latest report`
   - `Summarize report`
 
-## Intent Mode 配置
+## Model Mode 配置
 
 - `fake`
-  规则式解析，适合开发和业务接入阶段
+  规则式模型，适合开发和业务接入阶段
 - `llm`
-  基于 GLM 官方 API provider 的结构化意图解析；失败自动回退到 `fake`
+  基于 GLM 官方 API provider 的结构化 Agent 决策；失败自动回退到 `fake`
 
 当前默认 LLM 配置约定：
 
@@ -114,7 +114,7 @@
   - `summary`
   - `steps`
 
-普通聊天只会追加 `messages`；明确任务请求才会创建 `runs` 和 `tasks`。
+普通聊天只会追加 `messages`；明确任务请求才会创建 `runs` 和 `tasks`。这些行为由 `ReactAgent` 的结构化决策驱动，而不是 API 层的硬编码分流。
 
 当前官方 demo 推荐的两条 agent prompt：
 

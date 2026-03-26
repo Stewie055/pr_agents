@@ -70,6 +70,12 @@ class AgentEntry(str, Enum):
     DATABASE = "database"
 
 
+class AgentDecisionAction(str, Enum):
+    RESPOND = "respond"
+    CALL_TOOL = "call_tool"
+    FINISH = "finish"
+
+
 class IntentMode(str, Enum):
     FAKE = "fake"
     LLM = "llm"
@@ -356,6 +362,61 @@ class AgentStreamEvent(BaseModel):
     run_id: str
     data: dict[str, Any] = Field(default_factory=dict)
     timestamp: str
+
+
+class ShortTermMemory(BaseModel):
+    recent_messages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MidTermMemory(BaseModel):
+    latest_task_summary: dict[str, Any] = Field(default_factory=dict)
+    latest_report_summary: str = ""
+    latest_report_artifact_id: str | None = None
+
+
+class MemorySnapshot(BaseModel):
+    short_term: ShortTermMemory = Field(default_factory=ShortTermMemory)
+    mid_term: MidTermMemory = Field(default_factory=MidTermMemory)
+    knowledge: list[str] = Field(default_factory=list)
+
+
+class AgentContext(BaseModel):
+    session_id: str
+    user_message: str
+    conversation_window: list[dict[str, Any]] = Field(default_factory=list)
+    recent_tasks: list[dict[str, Any]] = Field(default_factory=list)
+    recent_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    latest_report_text: str = ""
+    latest_report_summary: str = ""
+    latest_report_artifact_id: str | None = None
+    memory: MemorySnapshot = Field(default_factory=MemorySnapshot)
+
+
+class AgentDecision(BaseModel):
+    action: AgentDecisionAction
+    tool_name: str | None = None
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    response: str = ""
+    thought_summary: str = ""
+    decision_source: str = IntentMode.FAKE.value
+    used_fallback: bool = False
+
+
+class AgentPlannedStep(BaseModel):
+    step_index: int
+    title: str
+    tool_name: str
+    inputs_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentPlan(BaseModel):
+    goal: str
+    business_code: str
+    entry: AgentEntry
+    steps: list[AgentPlannedStep] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    planner_source: str
+    used_fallback: bool = False
 
 
 class AgentIntent(BaseModel):

@@ -1,205 +1,515 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-from typing import Protocol
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, ValidationError
+from pr_agents.models import (
+    AgentContext,
+    AgentDecision,
+    AgentDecisionAction,
+    AgentEntry,
+    AgentMessageStartResponse,
+    AgentPlan,
+    AgentRunStatus,
+    AgentStepStatus,
+    AgentStreamEvent,
+    DatabaseAnalysisRequest,
+    FileAnalysisRequest,
+    MessageRole,
+    MessageType,
+)
 
-from pr_agents.agent.intents import IntentParser, LLMProvider
-from pr_agents.models import AgentAction, AgentEntry, AgentIntent
+from .context import ContextManager
+from .planner_agent import PlannerAgent
+from .react_agent import ReactAgent
+
+if TYPE_CHECKING:
+    from pr_agents.application.tasks import TaskApplicationService
+    from pr_agents.infrastructure import AgentSessionRepository
 
 
-class PlannedStep(BaseModel):
-    step_index: int
-    title: str
-    tool_name: str
-    inputs_summary: dict = Field(default_factory=dict)
+def event_timestamp() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-class ExecutionPlan(BaseModel):
-    goal: str
-    steps: list[PlannedStep]
-    planner_source: str
-    used_fallback: bool = False
+class AgentRuntime:
+    def __init__(
+        self,
+        *,
+        session_repository: AgentSessionRepository,
+        task_service: TaskApplicationService,
+        context_manager: ContextManager,
+        planner_agent: PlannerAgent,
+        react_agent: ReactAgent,
+        demo_data_path: Path,
+        mode: str,
+    ) -> None:
+        self.session_repository = session_repository
+        self.task_service = task_service
+        self.context_manager = context_manager
+        self.planner_agent = planner_agent
+        self.react_agent = react_agent
+        self.demo_data_path = demo_data_path
+        self._mode = mode
 
+    @property
+    def mode(self) -> str:
+        return getattr(self.react_agent, "mode", self._mode)
 
-class ConversationRouter:
-    def route(self, content: str) -> AgentAction | None:
-        normalized = content.strip()
-        lower = normalized.lower()
-        if not normalized:
-            return AgentAction.CHAT
-        if self._is_chat(lower, normalized):
-            return AgentAction.CHAT
-        if self._is_report_follow_up(lower, normalized):
-            return AgentAction.SHOW_REPORT
-        if self._looks_like_task(lower, normalized):
-            return None
-        return AgentAction.CHAT
+    def stream_run_events(self, session_id: str, run_id: str):
+        run = self.session_repository.get_run(run_id)
+        if run is None or run.session_id != session_id:
+            yield self._event("run_failed", session_id, run_id, {"message": "run not found"})
+            return
+        if run.status != AgentRunStatus.PLANNED:
+            yield self._snapshot_event(session_id, run_id)
+            return
 
-    def is_explicit_task(self, content: str) -> bool:
-        normalized = content.strip()
-        lower = normalized.lower()
-        has_business = "a_demo" in lower or "b001" in lower or "A_DEMO" in normalized or "B001" in normalized
-        has_intent = any(
-            marker in lower or marker in normalized
-            for marker in ("scientific plot", "report", "chart", "plot", "分析", "报告", "画图", "绘图", "database", "数据库")
+        request_content = run.metadata.get("request_content", run.goal)
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.RUNNING,
+            summary="Run started.",
+            metadata={"state": "running"},
         )
-        return has_business and has_intent
-
-    @staticmethod
-    def _is_chat(lower: str, original: str) -> bool:
-        chat_phrases = {
-            "hi",
-            "hello",
-            "hey",
-            "你好",
-            "您好",
-            "嗨",
-            "在吗",
-            "你是谁",
-            "你能做什么",
-            "怎么用",
-            "help",
-        }
-        return lower in chat_phrases or original in chat_phrases
-
-    @staticmethod
-    def _is_report_follow_up(lower: str, original: str) -> bool:
-        return (
-            "show me the report again" in lower
-            or "show the report again" in lower
-            or "report again" in lower
-            or "show latest report" in lower
-            or "summarize the report" in lower
-            or "summarise the report" in lower
-            or "report summary" in lower
-            or "key points" in lower
-            or "再看报告" in original
-            or "重新看报告" in original
-            or "概括这份报告" in original
-            or "总结这份报告" in original
-            or "报告重点" in original
+        yield self._event(
+            "run_started",
+            session_id,
+            run_id,
+            {"goal": request_content, "intent_mode": self.mode},
         )
 
-    @staticmethod
-    def _looks_like_task(lower: str, original: str) -> bool:
-        markers = (
-            "a_demo",
-            "b001",
-            "database",
-            "scientific plot",
-            "report",
-            "analy",
-            "chart",
-            "plot",
-            "分析",
-            "报告",
-            "画图",
-            "绘图",
-            "数据库",
+        context = self.context_manager.build_context(session_id, request_content)
+        decision = self.react_agent.decide(context)
+
+        if decision.action == AgentDecisionAction.RESPOND:
+            yield from self._respond_directly(session_id, run_id, context, decision)
+            return
+
+        if decision.action == AgentDecisionAction.CALL_TOOL and decision.tool_name in {
+            "load_latest_report",
+            "summarize_report",
+        }:
+            yield from self._handle_report_tool(session_id, run_id, context, decision)
+            return
+
+        yield self._event(
+            "planning_started",
+            session_id,
+            run_id,
+            {
+                "decision_source": decision.decision_source,
+                "tool_name": decision.tool_name,
+                "thought_summary": decision.thought_summary,
+            },
         )
-        return any(marker in lower or marker in original for marker in markers)
-
-
-class Planner(Protocol):
-    mode: str
-
-    def build_plan(self, intent: AgentIntent) -> ExecutionPlan:
-        ...
-
-
-class FakePlanner:
-    mode = "fake"
-
-    def build_plan(self, intent: AgentIntent) -> ExecutionPlan:
-        if intent.entry == AgentEntry.DATABASE:
-            first = PlannedStep(
-                step_index=0,
-                title=f"Run database analysis workflow for {intent.business_code}",
-                tool_name="run_db_analysis_workflow",
-                inputs_summary={
-                    "business_code": intent.business_code,
-                    "entry": intent.entry.value,
-                    "chart_type": intent.chart_type,
-                },
+        plan = self.planner_agent.build_plan(
+            context,
+            decision.model_dump(mode="json"),
+        )
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.RUNNING,
+            summary=f"Created plan with {len(plan.steps)} steps.",
+            metadata={
+                "business_code": plan.business_code,
+                "entry": plan.entry.value,
+                "decision_source": decision.decision_source,
+                "decision_fallback": decision.used_fallback,
+                "planner_source": plan.planner_source,
+                "goal": plan.goal,
+                "task_type": "analysis",
+            },
+        )
+        steps = [
+            self.session_repository.create_run_step(
+                run_id=run_id,
+                step_index=step.step_index,
+                title=step.title,
+                tool_name=step.tool_name,
+                inputs_summary=step.inputs_summary,
             )
+            for step in plan.steps
+        ]
+        self.session_repository.add_message(
+            session_id,
+            MessageRole.ASSISTANT,
+            MessageType.PLAN,
+            self._plan_summary(plan),
+            metadata={
+                "run_id": run_id,
+                "business_code": plan.business_code,
+                "entry": plan.entry.value,
+                "planner_source": plan.planner_source,
+                "intent_mode": self.mode,
+            },
+        )
+        yield self._event(
+            "plan_created",
+            session_id,
+            run_id,
+            {
+                "goal": plan.goal,
+                "planner_source": plan.planner_source,
+                "steps": [step.model_dump(mode="json") for step in steps],
+            },
+        )
+
+        final_payload, failed, events = self._execute_plan(session_id, run_id, context, plan, steps)
+        for event in events:
+            yield event
+        yield self._event("run_failed" if failed else "run_completed", session_id, run_id, final_payload)
+        yield self._snapshot_event(session_id, run_id)
+
+    def _respond_directly(self, session_id: str, run_id: str, context: AgentContext, decision: AgentDecision):
+        message = self.session_repository.add_message(
+            session_id,
+            MessageRole.ASSISTANT,
+            MessageType.CHAT,
+            decision.response,
+            metadata={
+                "chat_only": True,
+                "intent_mode": self.mode,
+                "decision_source": decision.decision_source,
+                "thought_summary": decision.thought_summary,
+            },
+        )
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.SUCCEEDED,
+            summary="Returned direct agent reply.",
+            metadata={
+                "chat_only": True,
+                "message_id": message.message_id,
+                "decision_source": decision.decision_source,
+            },
+        )
+        yield self._event(
+            "chat_reply",
+            session_id,
+            run_id,
+            {"message": decision.response, "message_id": message.message_id},
+        )
+        yield self._event("run_completed", session_id, run_id, {"summary": "Returned direct agent reply."})
+        yield self._snapshot_event(session_id, run_id)
+
+    def _handle_report_tool(self, session_id: str, run_id: str, context: AgentContext, decision: AgentDecision):
+        if not context.latest_report_artifact_id:
+            error_message = "There is no completed report in this session yet. Run a demo workflow first."
+            self.session_repository.add_message(
+                session_id,
+                MessageRole.ASSISTANT,
+                MessageType.ERROR,
+                error_message,
+            )
+            self.session_repository.update_run(run_id, AgentRunStatus.FAILED, summary=error_message)
+            yield self._event("run_failed", session_id, run_id, {"message": error_message})
+            yield self._snapshot_event(session_id, run_id)
+            return
+
+        if decision.tool_name == "summarize_report":
+            business_code = (
+                context.memory.mid_term.latest_task_summary.get("business_code") or "A_DEMO"
+            )
+            response_text = (
+                f"Summary for {business_code}: {context.latest_report_summary} "
+                "The full report is available if you want the complete text."
+            )
+            summary = "Returned latest report summary."
+            summary_only = True
         else:
-            first = PlannedStep(
-                step_index=0,
-                title=f"Run file analysis workflow for {intent.business_code}",
-                tool_name="run_file_analysis_workflow",
-                inputs_summary={
-                    "business_code": intent.business_code,
-                    "entry": intent.entry.value,
-                    "chart_type": intent.chart_type,
-                },
-            )
+            response_text = context.latest_report_text
+            summary = "Returned latest report."
+            summary_only = False
 
-        second = PlannedStep(
-            step_index=1,
-            title="Summarize workflow results for the user",
-            tool_name="summarize_session_results",
-            inputs_summary={"goal": intent.objective},
+        message = self.session_repository.add_message(
+            session_id,
+            MessageRole.ASSISTANT,
+            MessageType.CHAT,
+            response_text,
+            metadata={
+                "report_artifact_id": context.latest_report_artifact_id,
+                "report_preview": context.latest_report_text,
+                "summary_only": summary_only,
+            },
         )
-        return ExecutionPlan(
-            goal=intent.objective,
-            steps=[first, second],
-            planner_source=self.mode,
-            used_fallback=False,
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.SUCCEEDED,
+            summary=summary,
+            metadata={
+                "report_artifact_id": context.latest_report_artifact_id,
+                "summary_only": summary_only,
+                "decision_source": decision.decision_source,
+            },
         )
+        yield self._event(
+            "chat_reply",
+            session_id,
+            run_id,
+            {
+                "message": response_text,
+                "message_id": message.message_id,
+                "report_artifact_id": context.latest_report_artifact_id,
+            },
+        )
+        yield self._event("run_completed", session_id, run_id, {"summary": summary})
+        yield self._snapshot_event(session_id, run_id)
 
-
-class LLMPlanner:
-    mode = "llm"
-
-    def __init__(self, provider: LLMProvider, model: str | None, timeout: float, fallback_planner: Planner) -> None:
-        self.provider = provider
-        self.model = model or ""
-        self.timeout = timeout
-        self.fallback_planner = fallback_planner
-
-    def build_plan(self, intent: AgentIntent) -> ExecutionPlan:
-        try:
-            if not self.provider.is_configured() or not self.model:
-                raise ValueError("llm planner is not configured")
-            raw = self.provider.complete_json(
-                system_prompt=self._system_prompt(),
-                user_prompt=intent.model_dump_json(),
-                model=self.model,
-                timeout=self.timeout,
+    def _execute_plan(self, session_id: str, run_id: str, context: AgentContext, plan: AgentPlan, steps):
+        task_response = None
+        result = None
+        report_text = ""
+        report_artifact_id = None
+        events: list[AgentStreamEvent] = []
+        for step in steps:
+            self.session_repository.update_run_step(step.step_id, AgentStepStatus.RUNNING)
+            events.append(
+                self._event(
+                    "step_started",
+                    session_id,
+                    run_id,
+                    {
+                        "step_id": step.step_id,
+                        "step_index": step.step_index,
+                        "title": step.title,
+                        "tool_name": step.tool_name,
+                    },
+                )
             )
-            plan = ExecutionPlan.model_validate(self._extract_json(raw))
-            plan.planner_source = self.mode
-            plan.used_fallback = False
-            return plan
-        except (ValueError, KeyError, ValidationError, json.JSONDecodeError):
-            fallback = self.fallback_planner.build_plan(intent)
-            fallback.planner_source = f"{self.mode}_fallback"
-            fallback.used_fallback = True
-            return fallback
+            if step.tool_name in {"run_file_analysis_workflow", "run_db_analysis_workflow"}:
+                tool_name = "run_db_analysis" if plan.entry == AgentEntry.DATABASE else "run_file_analysis"
+                self.session_repository.add_message(
+                    session_id,
+                    MessageRole.TOOL,
+                    MessageType.TOOL_CALL,
+                    tool_name,
+                    metadata={
+                        "run_id": run_id,
+                        "step_id": step.step_id,
+                        "business_code": plan.business_code,
+                        "intent_mode": self.mode,
+                    },
+                )
+                events.append(
+                    self._event(
+                        "tool_called",
+                        session_id,
+                        run_id,
+                        {"step_id": step.step_id, "tool_name": tool_name, "business_code": plan.business_code},
+                    )
+                )
+                task_response = self._run_analysis_task(session_id, context, plan)
+                if task_response.error:
+                    self.session_repository.update_run_step(
+                        step.step_id,
+                        AgentStepStatus.FAILED,
+                        error_summary=task_response.error.model_dump(mode="json"),
+                        task_id=task_response.task_id,
+                    )
+                    self.session_repository.update_run(
+                        run_id,
+                        AgentRunStatus.FAILED,
+                        summary=f"Failed on step: {step.title}",
+                    )
+                    events.append(
+                        self._event(
+                            "tool_result",
+                            session_id,
+                            run_id,
+                            {
+                                "step_id": step.step_id,
+                                "task_id": task_response.task_id,
+                                "status": task_response.status.value,
+                                "error": task_response.error.model_dump(mode="json"),
+                            },
+                        )
+                    )
+                    events.append(
+                        self._event(
+                            "step_failed",
+                            session_id,
+                            run_id,
+                            {"step_id": step.step_id, "title": step.title, "message": task_response.error.message},
+                        )
+                    )
+                    self.session_repository.add_message(
+                        session_id,
+                        MessageRole.ASSISTANT,
+                        MessageType.ERROR,
+                        f"Execution stopped at '{step.title}': {task_response.error.message}",
+                        metadata={"run_id": run_id, "task_id": task_response.task_id},
+                    )
+                    return (
+                        {"message": f"Execution stopped at '{step.title}': {task_response.error.message}"},
+                        True,
+                        events,
+                    )
+                result = task_response.result
+                artifact_ids = [artifact.artifact_id for artifact in result.artifacts] if result else []
+                report_artifact_id = result.report.artifact.artifact_id if result and result.report else None
+                if report_artifact_id:
+                    report_text = self.task_service.read_artifact_content(report_artifact_id) or ""
+                self.session_repository.update_run_step(
+                    step.step_id,
+                    AgentStepStatus.SUCCEEDED,
+                    observation_summary={
+                        "task_status": task_response.status.value,
+                        "chart_type": result.chart.chart_type if result and result.chart else None,
+                        "report_summary": result.report.summary if result and result.report else None,
+                    },
+                    task_id=task_response.task_id,
+                    artifact_ids=artifact_ids,
+                )
+                self.session_repository.add_message(
+                    session_id,
+                    MessageRole.TOOL,
+                    MessageType.TOOL_RESULT,
+                    f"Task {task_response.task_id} finished with status {task_response.status.value}.",
+                    metadata={
+                        "run_id": run_id,
+                        "step_id": step.step_id,
+                        "task_id": task_response.task_id,
+                        "chart_type": result.chart.chart_type if result and result.chart else None,
+                        "report_artifact_id": report_artifact_id,
+                    },
+                )
+                events.append(
+                    self._event(
+                        "tool_result",
+                        session_id,
+                        run_id,
+                        {
+                            "step_id": step.step_id,
+                            "task_id": task_response.task_id,
+                            "status": task_response.status.value,
+                            "chart_type": result.chart.chart_type if result and result.chart else None,
+                            "report_artifact_id": report_artifact_id,
+                        },
+                    )
+                )
+                events.append(
+                    self._event(
+                        "step_completed",
+                        session_id,
+                        run_id,
+                        {"step_id": step.step_id, "title": step.title, "task_id": task_response.task_id},
+                    )
+                )
+            else:
+                source_label = "database analysis" if plan.entry == AgentEntry.DATABASE else "file analysis"
+                summary = (
+                    f"Completed {source_label} for {plan.business_code}. "
+                    f"Chart type: {result.chart.chart_type if result and result.chart else 'n/a'}. "
+                    f"Report summary: {result.report.summary if result and result.report else 'n/a'}."
+                )
+                self.session_repository.update_run_step(
+                    step.step_id,
+                    AgentStepStatus.SUCCEEDED,
+                    observation_summary={"summary": summary},
+                    task_id=task_response.task_id if task_response else None,
+                    artifact_ids=[report_artifact_id] if report_artifact_id else [],
+                )
+                events.append(
+                    self._event(
+                        "step_completed",
+                        session_id,
+                        run_id,
+                        {"step_id": step.step_id, "title": step.title, "summary": summary},
+                    )
+                )
 
-    @staticmethod
-    def _system_prompt() -> str:
+        source_label = "database analysis" if plan.entry == AgentEntry.DATABASE else "file analysis"
+        final_content = (
+            f"Completed {source_label} for {plan.business_code}. "
+            f"Chart type: {result.chart.chart_type if result and result.chart else 'n/a'}. "
+            f"Report summary: {result.report.summary if result and result.report else 'n/a'}."
+        )
+        self.session_repository.add_message(
+            session_id,
+            MessageRole.ASSISTANT,
+            MessageType.CHAT,
+            final_content,
+            metadata={
+                "run_id": run_id,
+                "task_id": task_response.task_id if task_response else None,
+                "report_artifact_id": report_artifact_id,
+                "report_preview": report_text,
+                "business_code": plan.business_code,
+                "intent_mode": self.mode,
+            },
+        )
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.SUCCEEDED,
+            summary=f"Completed {len(steps)} planned steps.",
+        )
         return (
-            "Return valid JSON only with fields goal, steps, planner_source, used_fallback. "
-            "Each step must include step_index, title, tool_name, inputs_summary. "
-            "Allowed tool_name values: run_file_analysis_workflow, run_db_analysis_workflow, summarize_session_results. "
-            "Create exactly two steps: the workflow execution step matching the entry, then summarize_session_results."
+            {
+                "message": final_content,
+                "task_id": task_response.task_id if task_response else None,
+                "report_artifact_id": report_artifact_id,
+                "summary": f"Completed {len(steps)} planned steps.",
+            },
+            False,
+            events,
+        )
+
+    def _run_analysis_task(self, session_id: str, context: AgentContext, plan: AgentPlan):
+        if plan.entry == AgentEntry.DATABASE:
+            return self.task_service.submit_db_analysis(
+                DatabaseAnalysisRequest(
+                    business_code=plan.business_code,
+                    objective=plan.goal,
+                    query_name="demo_query",
+                    sql="select * from cleaned_demo_data",
+                    source_profile={"source_pattern": "per_business_file", "data_version": "demo-v1"},
+                    chart_profile={"chart_type": "scientific_plot"},
+                    report_profile={"template": "demo-template"},
+                    session_id=session_id,
+                )
+            )
+        return self.task_service.submit_file_analysis(
+            FileAnalysisRequest(
+                business_code=plan.business_code,
+                objective=plan.goal,
+                file_name=self.demo_data_path.name,
+                content=self.demo_data_path.read_text(encoding="utf-8"),
+                source_profile={"source_pattern": "per_business_file", "data_version": "demo-v1"},
+                chart_profile={"chart_type": "scientific_plot"},
+                report_profile={"template": "demo-template"},
+                session_id=session_id,
+            )
         )
 
     @staticmethod
-    def _extract_json(content: str) -> dict:
-        stripped = content.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            stripped = "\n".join(line for line in lines if not line.startswith("```")).strip()
-        return json.loads(stripped)
+    def _plan_summary(plan: AgentPlan) -> str:
+        first_step = plan.steps[0].title if plan.steps else "No steps"
+        return f"I will plan and execute this task for {plan.business_code}. First step: {first_step}. Total steps: {len(plan.steps)}."
 
+    def _snapshot_event(self, session_id: str, run_id: str) -> AgentStreamEvent:
+        messages = self.session_repository.list_messages(session_id)
+        tasks = self.task_service.list_session_tasks(session_id)
+        runs = self.session_repository.list_runs(session_id)
+        return self._event(
+            "session_snapshot",
+            session_id,
+            run_id,
+            {
+                "session_id": session_id,
+                "messages": [message.model_dump(mode="json") for message in messages],
+                "tasks": [task.model_dump(mode="json") for task in tasks],
+                "runs": [run.model_dump(mode="json") for run in runs],
+            },
+        )
 
-@dataclass
-class AgentRuntimeDependencies:
-    router: ConversationRouter
-    intent_parser: IntentParser
-    planner: Planner
+    @staticmethod
+    def _event(event_name: str, session_id: str, run_id: str, data: dict) -> AgentStreamEvent:
+        return AgentStreamEvent(
+            event=event_name,
+            session_id=session_id,
+            run_id=run_id,
+            data=data,
+            timestamp=event_timestamp(),
+        )

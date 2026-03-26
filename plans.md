@@ -60,30 +60,30 @@
 
 ## 第八阶段计划与实现
 
-- 将意图解析层升级为 fake / llm 双模可切换架构。
-- 保留 fake 规则解析器，作为业务 `Service` 适配阶段的默认稳定模式。
-- 接入 OpenAI 兼容的 llm 意图解析器，并在失败时自动回退到 fake。
+- 将模型层升级为 fake / llm 双模可切换架构。
+- 保留 `FakeLLM`，作为业务 `Service` 适配阶段的默认稳定模式。
+- 接入真实 llm provider，并在失败时自动回退到 fake。
 - 增加 `PR_AGENTS_INTENT_MODE`、LLM base URL、API key、model、timeout 配置。
-- 在 WebUI 和 Agent metadata 中展示当前 intent mode 与是否发生 fallback。
+- 在 WebUI 和 Agent metadata 中展示当前模式与是否发生 fallback。
 
 ## 第九阶段计划与实现
 
-- 将 llm 意图解析收敛为 provider 抽象，不再把 HTTP 调用直接写在 parser 里。
+- 将 llm 调用收敛为 provider 抽象，不再把 HTTP 调用直接写在 parser 里。
 - 新增 `GLMProvider`，用于承接 GLM 官方 API。
 - 保持 `fake` 与 `llm` 双模共存，默认仍使用 `fake` 以便先适配业务 `Service`。
 - 新增 `PR_AGENTS_LLM_PROVIDER` 配置，默认 provider 为 `glm`，默认模型为 `GLM-4.5-Air`。
 - LLM API key 只允许通过环境变量注入，不进入仓库。
-- 在 parser 层保留 fallback，provider 未配置、超时、响应非法时自动退回 `fake`。
+- 在模型层保留 fallback，provider 未配置、超时、响应非法时自动退回 `fake`。
 - 继续保持 Agent 会话层、任务层和 Workflow 层不直接依赖供应商实现，方便后续迁移到局域网环境。
 
 ## 第十阶段计划与实现
 
-- 将 Agent 从“意图解析后直接调 workflow”升级为真正的 `Router -> Planner -> Executor` 运行时。
-- 增加 `chat / analyze / show_report` 三类动作，普通聊天默认不触发工具。
-- 增加 workflow-level 的结构化计划与步骤轨迹，并持久化到 SQLite。
+- 将 Agent 从“意图解析后直接调 workflow”升级为真正的任务型运行时。
+- 引入单一 `AgentRuntime` 主入口，内部组合 `ContextManager`、`Memory`、`PlannerAgent`、`ReactAgent`。
+- 让 `ReactAgent` 基于 LLM 输出结构化决策，不再由 runtime 预先写死 `chat / report / task` 分支。
+- 规划粒度固定为 workflow-level，步骤轨迹持久化到 SQLite。
 - 对任务型请求返回 `runs`，包含 run 状态、步骤状态和关键 observation 摘要。
-- WebUI 改为普通聊天只显示消息，任务请求额外显示 run/step 轨迹卡。
-- 保持 `fake` / `llm` 双模在 router/planner 层都可用，`llm` 失败仍回退到 `fake`。
+- WebUI 改为普通聊天只显示消息，任务请求额外显示折叠的 `Task details`。
 
 ## 第十一阶段计划与实现
 
@@ -112,10 +112,19 @@
   - 返回报告重点摘要
 - README 与 `docs/demo.md` 改写为面向外部展示的示例手册，默认以 `llm` 模式演示，`fake` 作为开发回退说明。
 
+## 第十四阶段计划与实现
+
+- 将 Agent Orchestration 重构为以 `AgentRuntime` 为中心的架构，不再保留旧的 intent parser 主链路。
+- 新增 `FakeLLM`、`GLMProvider`、`ContextManager`、`MemoryManager`、`PlannerAgent`、`ReactAgent`。
+- 通过工厂在启动时注入不同 llm，实现 fake / llm 切换，而不是在上层 runtime 中散布分支。
+- `Memory` 作为正式一层，当前实现短期与中期记忆；长期知识和 RAG 作为后续扩展位，归属于 Memory，而不是单独平级模块。
+- `ReactAgent` 负责主决策循环；在需要规划时再调用 `PlannerAgent`，最终只允许调用 workflow-level tools。
+- 删除旧的 `agent/intents.py`，避免旧的 parser 架构继续干扰后续业务接入。
+
 ## 下一阶段建议
 
 - 增加真实 QT Service 适配器。
 - 增加跨服务重启的完整会话列表恢复与排序策略。
 - 增加异步任务执行。
 - 增加长期知识库与 RAG 读取。
-- 增强 Agent 的真实 Planner / Memory / RAG 能力。
+- 让 `Memory` 从当前短期/中期扩展到长期知识能力。

@@ -3,12 +3,20 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from pr_agents.agent import FakePlanner, LLMPlanner
-from pr_agents.agent.intents import GLMProvider, LLMIntentParser
+from pr_agents.agent.llm import GLMProvider
 from pr_agents.api.app import create_api_app
 from pr_agents.bootstrap import build_api_app
 from pr_agents.bootstrap import build_components
+from pr_agents.models import IntentMode
 from pr_agents.settings import Settings
+
+
+def build_test_settings(tmp_path: Path) -> Settings:
+    return Settings(
+        artifact_base_dir=str(tmp_path / "artifacts"),
+        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
+        intent_mode=IntentMode.FAKE,
+    )
 
 
 def consume_sse(client: TestClient, url: str) -> list[dict]:
@@ -32,12 +40,7 @@ def consume_sse(client: TestClient, url: str) -> list[dict]:
 
 
 def test_file_analysis_api_and_task_queries(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.post(
@@ -75,12 +78,7 @@ def test_file_analysis_api_and_task_queries(tmp_path: Path) -> None:
 
 
 def test_missing_resources_return_404(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     assert client.get("/api/v1/tasks/unknown").status_code == 404
@@ -88,12 +86,7 @@ def test_missing_resources_return_404(tmp_path: Path) -> None:
 
 
 def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.post(
@@ -115,10 +108,7 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
     from pr_agents.bootstrap import build_components
 
     _, task_service, _ = build_components(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
+        build_test_settings(tmp_path)
     )
     artifact = task_service.get_artifact(artifact_id)
     assert artifact is not None
@@ -136,12 +126,7 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
 
 
 def test_shared_file_business_mode_and_scientific_plot(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.post(
@@ -164,12 +149,7 @@ def test_shared_file_business_mode_and_scientific_plot(tmp_path: Path) -> None:
 
 
 def test_official_a_demo_flow_returns_scientific_plot_and_report(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.post(
@@ -204,12 +184,7 @@ def test_official_a_demo_flow_returns_scientific_plot_and_report(tmp_path: Path)
 
 
 def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.get("/")
@@ -232,12 +207,7 @@ def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
 
 
 def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     create_response = client.post("/api/v1/agent/sessions")
@@ -254,7 +224,6 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     events = consume_sse(client, start_payload["stream_url"])
     event_names = [event["event"] for event in events]
     assert "run_started" in event_names
-    assert "routing_started" in event_names
     assert "planning_started" in event_names
     assert "plan_created" in event_names
     assert "tool_called" in event_names
@@ -267,7 +236,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert payload["runs"][0]["steps"]
     plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
     assert plan_message["metadata"]["intent_mode"] == "fake"
-    assert plan_message["metadata"]["intent_source"] == "fake"
+    assert plan_message["metadata"]["planner_source"] == "fake"
     result_message = next(
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )
@@ -301,12 +270,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
 
 
 def test_agent_session_database_demo_flow(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
@@ -329,12 +293,7 @@ def test_agent_session_database_demo_flow(tmp_path: Path) -> None:
 
 
 def test_agent_session_chat_message_does_not_trigger_plan_or_tool(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
@@ -354,12 +313,7 @@ def test_agent_session_chat_message_does_not_trigger_plan_or_tool(tmp_path: Path
 
 
 def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
-    app = build_api_app(
-        Settings(
-            artifact_base_dir=str(tmp_path / "artifacts"),
-            sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-        )
-    )
+    app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
@@ -384,10 +338,7 @@ def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
 
 
 def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> None:
-    settings = Settings(
-        artifact_base_dir=str(tmp_path / "artifacts"),
-        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-    )
+    settings = build_test_settings(tmp_path)
     app = build_api_app(settings)
     client = TestClient(app)
 
@@ -416,65 +367,60 @@ def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> No
     assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
 
 
-def test_agent_session_uses_llm_mode_with_fallback_parser(tmp_path: Path) -> None:
-    settings = Settings(
-        artifact_base_dir=str(tmp_path / "artifacts"),
-        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-    )
+def test_agent_session_uses_llm_mode_with_fallback_llm(tmp_path: Path) -> None:
+    settings = build_test_settings(tmp_path)
     webui, task_service, agent_session_service = build_components(settings)
     del webui
-    agent_session_service.intent_parser = LLMIntentParser(
-        provider=GLMProvider(
-            base_url="https://glm.example.com/v1",
-            api_key="secret",
-            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    '{"action":"analyze","business_code":"A_DEMO","entry":"file",'
-                                    '"objective":"Please analyze A_DEMO with the model.",'
-                                    '"chart_type":"scientific_plot","source_pattern":"per_business_file"}'
-                                )
-                            }
+    decision_provider = GLMProvider(
+        base_url="https://glm.example.com/v1",
+        api_key="secret",
+        requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"action":"call_tool","tool_name":"run_file_analysis_workflow",'
+                                '"tool_input":{"business_code":"A_DEMO","entry":"file","objective":"Please analyze A_DEMO with the model.","chart_type":"scientific_plot"},'
+                                '"response":"","thought_summary":"Run the file workflow."}'
+                            )
                         }
-                    ]
-                }
-            ),
+                    }
+                ]
+            }
         ),
-        model="demo-model",
-        fallback_parser=agent_session_service.intent_parser,
     )
-    agent_session_service.planner = LLMPlanner(
-        provider=GLMProvider(
-            base_url="https://glm.example.com/v1",
-            api_key="secret",
-            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    '{"goal":"Please analyze A_DEMO with the model.",'
-                                    '"steps":['
-                                    '{"step_index":0,"title":"Run file analysis workflow for A_DEMO",'
-                                    '"tool_name":"run_file_analysis_workflow","inputs_summary":{"business_code":"A_DEMO"}},'
-                                    '{"step_index":1,"title":"Summarize workflow results for the user",'
-                                    '"tool_name":"summarize_session_results","inputs_summary":{"goal":"Please analyze A_DEMO with the model."}}'
-                                    '],'
-                                    '"planner_source":"llm","used_fallback":false}'
-                                )
-                            }
+    planner_provider = GLMProvider(
+        base_url="https://glm.example.com/v1",
+        api_key="secret",
+        requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"goal":"Please analyze A_DEMO with the model.",'
+                                '"business_code":"A_DEMO",'
+                                '"entry":"file",'
+                                '"steps":['
+                                '{"step_index":0,"title":"Run file analysis workflow for A_DEMO",'
+                                '"tool_name":"run_file_analysis_workflow","inputs_summary":{"business_code":"A_DEMO"}},'
+                                '{"step_index":1,"title":"Summarize workflow results for the user",'
+                                '"tool_name":"summarize_session_results","inputs_summary":{"goal":"Please analyze A_DEMO with the model."}}'
+                                '],'
+                                '"expected_outputs":["chart","report"],'
+                                '"planner_source":"llm","used_fallback":false}'
+                            )
                         }
-                    ]
-                }
-            ),
+                    }
+                ]
+            }
         ),
-        model="demo-model",
-        timeout=30.0,
-        fallback_planner=FakePlanner(),
     )
+    agent_session_service.runtime.react_agent.llm = decision_provider
+    agent_session_service.runtime.react_agent.mode = "llm"
+    agent_session_service.runtime.planner_agent.llm = planner_provider
+    agent_session_service.runtime.planner_agent.mode = "llm"
     app = create_api_app(task_service, agent_session_service)
     client = TestClient(app)
 
@@ -488,39 +434,34 @@ def test_agent_session_uses_llm_mode_with_fallback_parser(tmp_path: Path) -> Non
 
     plan_message = next(msg for msg in payload["messages"] if msg["message_type"] == "plan")
     assert plan_message["metadata"]["intent_mode"] == "llm"
-    assert plan_message["metadata"]["intent_source"] == "llm"
     assert payload["runs"][0]["metadata"]["planner_source"] in {"llm", "llm_fallback"}
+    assert payload["runs"][0]["metadata"]["decision_source"] in {"llm", "llm_fallback"}
     assert any(event["event"] == "plan_created" for event in events)
 
 
-def test_agent_session_forces_task_candidate_back_to_analysis_when_llm_misclassifies(tmp_path: Path) -> None:
-    settings = Settings(
-        artifact_base_dir=str(tmp_path / "artifacts"),
-        sqlite_path=str(tmp_path / "artifacts" / "app.db"),
-    )
+def test_agent_session_rejects_non_allowed_llm_tool_and_returns_response(tmp_path: Path) -> None:
+    settings = build_test_settings(tmp_path)
     webui, task_service, agent_session_service = build_components(settings)
     del webui
-    agent_session_service.intent_parser = LLMIntentParser(
-        provider=GLMProvider(
-            base_url="https://glm.example.com/v1",
-            api_key="secret",
-            requester=lambda _url, _payload, _headers, _timeout: json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    '{"action":"show_report","objective":"Please use A_DEMO file data to generate a scientific plot and report."}'
-                                )
-                            }
+    agent_session_service.runtime.react_agent.llm = GLMProvider(
+        base_url="https://glm.example.com/v1",
+        api_key="secret",
+        requester=lambda _url, _payload, _headers, _timeout: json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"action":"call_tool","tool_name":"unsafe_tool",'
+                                '"tool_input":{},"response":"","thought_summary":"Try a disallowed tool."}'
+                            )
                         }
-                    ]
-                }
-            ),
+                    }
+                ]
+            }
         ),
-        model="demo-model",
-        fallback_parser=agent_session_service.intent_parser,
     )
+    agent_session_service.runtime.react_agent.mode = "llm"
     app = create_api_app(task_service, agent_session_service)
     client = TestClient(app)
 
@@ -532,7 +473,6 @@ def test_agent_session_forces_task_candidate_back_to_analysis_when_llm_misclassi
     events = consume_sse(client, start_payload["stream_url"])
     payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
 
-    assert any(msg["message_type"] == "plan" for msg in payload["messages"])
-    assert payload["tasks"]
-    assert payload["runs"]
-    assert any(event["event"] == "tool_called" for event in events)
+    assert not any(msg["message_type"] == "plan" for msg in payload["messages"])
+    assert payload["tasks"] == []
+    assert any(event["event"] == "chat_reply" for event in events)

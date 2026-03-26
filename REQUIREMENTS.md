@@ -15,15 +15,17 @@
 - 支持用户通过聊天式 WebUI 使用 Agent 发起分析任务。
 - 支持 Agent session、多轮消息和 Agent 过程可视化。
 - 支持基础会话恢复和任务结果恢复。
-- Agent 的自然语言理解层需要独立于具体 session 控制逻辑。
-- 必须同时保留 `fake` 和 `llm` 两种意图解析模式。
+- Agent 的自然语言理解与工具决策需要独立于具体 session 控制逻辑。
+- 必须同时保留 `fake` 和 `llm` 两种模型模式。
 - 业务 `Service` 适配阶段默认应可使用 `fake` 模式，业务调通后再切换 `llm`。
 - `llm` 模式当前默认接入 GLM 官方 API，并默认使用 `GLM-4.5-Air`。
 - LLM provider 必须有独立适配层，便于后续把代码迁移到局域网环境后替换为其他网关或模型。
 - LLM API key 只允许通过环境变量或本地未提交配置注入，不得写入仓库。
-- Agent 必须采用“对话优先、工具后置”的交互原则，普通聊天不能默认触发工具。
-- Agent 的任务执行应包含 Router、Planner 和 Executor 三段式运行时。
-- 第一版 Planner 粒度固定为 workflow-level，不直接下钻到 Service 细步骤。
+- Agent 必须采用“对话优先、工具后置”的交互原则，但是否调用工具由 LLM 的结构化决策决定，不由 runtime 预先写死分支。
+- Agent Orchestration 需要以单一 `AgentRuntime` 为主入口，内部组合 `ContextManager`、`Memory`、`PlannerAgent`、`ReactAgent`。
+- 第一版 `PlannerAgent` 粒度固定为 workflow-level，不直接下钻到 Service 细步骤。
+- `ReactAgent` 负责主决策循环，并且只允许调用白名单 workflow-level tools。
+- `Memory` 是 Agent Orchestration 的正式一层，当前至少包含短期和中期记忆；长期知识和 RAG 归属于 Memory 的后续扩展能力。
 - 任务型消息必须保留 run/plan/step 轨迹，并支持失败后保留轨迹停止。
 - WebUI 需要支持 SSE 流式事件，而不是等待整包执行结果。
 - 流式协议应采用“POST 创建 run + GET SSE 订阅”的方式。
@@ -40,4 +42,4 @@
 
 - 本仓库不直接承载 QT 源码。
 - 当前版本不追求真实建模算法和复杂前端。
-- 当前版本不实现长期记忆和真实 RAG 检索，仅保留编排接口位置。
+- 当前版本不实现长期记忆和真实 RAG 检索，仅保留 Memory 内的扩展接口位置。
