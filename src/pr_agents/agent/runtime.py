@@ -10,6 +10,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
 
 from pr_agents.models import (
+    AgentControlState,
     AgentContext,
     AgentRunStatus,
     AgentStepStatus,
@@ -57,6 +58,7 @@ class AgentDeps:
     last_tool_name: str | None = None
     pending_preamble: str = ""
     tool_phase_started: bool = False
+    pause_announced: bool = False
 
     async def emit(self, event_name: str, data: dict[str, Any]) -> None:
         await self.queue.put(
@@ -72,6 +74,7 @@ class AgentDeps:
     async def append_assistant_text(self, chunk: str) -> None:
         if not chunk:
             return
+        await self.wait_if_paused()
         if not self.tool_phase_started and not self.current_step_ids:
             self.pending_preamble += chunk
             return
@@ -82,6 +85,7 @@ class AgentDeps:
         await self.emit("assistant_delta", {"delta": chunk})
 
     async def start_tool_step(self, title: str, tool_name: str, inputs_summary: dict[str, Any]) -> str:
+        await self.wait_if_paused()
         self.tool_phase_started = True
         self.pending_preamble = ""
         step = self.session_repository.create_run_step(
@@ -155,6 +159,20 @@ class AgentDeps:
         )
         await self.emit("tool_result", {"step_id": step_id, "status": "failed", "message": message, "task_id": task_id})
         await self.emit("step_failed", {"step_id": step_id, "message": message, "task_id": task_id})
+
+    async def wait_if_paused(self) -> None:
+        while True:
+            run = self.session_repository.get_run(self.run_id)
+            control_state = (run.metadata or {}).get("control_state", AgentControlState.RUNNING.value) if run else AgentControlState.RUNNING.value
+            if control_state != AgentControlState.PAUSED.value:
+                if self.pause_announced:
+                    self.pause_announced = False
+                    await self.emit("run_resumed", {"message": "Run resumed."})
+                return
+            if not self.pause_announced:
+                self.pause_announced = True
+                await self.emit("run_paused", {"message": "Run paused. Waiting for resume."})
+            await asyncio.sleep(0.2)
 
 
 class AgentRuntime:
@@ -358,7 +376,7 @@ class AgentRuntime:
             run_id,
             AgentRunStatus.RUNNING,
             summary="Run started.",
-            metadata={"state": "running"},
+            metadata={"state": "running", "control_state": AgentControlState.RUNNING.value},
         )
         yield self._event("run_started", session_id, run_id, {"goal": request_content, "intent_mode": self.mode})
 
@@ -391,6 +409,7 @@ class AgentRuntime:
                     deps=deps,
                     event_stream_handler=event_handler,
                 )
+                await deps.wait_if_paused()
                 if deps.current_step_ids:
                     final_text = deps.assistant_text.strip()
                     if not final_text:
@@ -516,5 +535,6 @@ class AgentRuntime:
 
     async def _emit_text_stream(self, deps: AgentDeps, content: str, delay: float = 0.15) -> None:
         for chunk in self._chunk_text(content):
+            await deps.wait_if_paused()
             await deps.emit("assistant_delta", {"delta": chunk})
             await asyncio.sleep(delay)

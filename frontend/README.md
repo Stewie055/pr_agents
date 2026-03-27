@@ -12,7 +12,7 @@
     - session 与消息请求
     - SSE 事件消费
     - process / artifacts / status bar / debug 数据映射
-    - mock execution controls
+    - execution controls 与后端控制接口联动
 - `src/composables/useDebugDrawerState.js`
   - 管理调试抽屉和各调试模块的展开状态，并写入本地存储。
 - `src/components/chat/*`
@@ -34,7 +34,7 @@
   - `hydrateTaskArtifacts(taskId)`：
     当前用 task detail + artifact content 补结果工件。接真实 chart/table/report 数据时优先改这里。
   - `pauseRun / resumeRun / rerunStep / modifyState`：
-    当前是 mock 控制，后续接真实执行控制接口时替换这里。
+    当前已接到后端 run control 骨架；其中 `rerunStep` 会拉起一个新的 run 并直接重新订阅流，后续可继续扩展到更细粒度的步骤重跑。
 - `workspaceDemoState.js`
   - 当前流程节点固定为四阶段。接真实多阶段 / 可重试流程图时替换这里的映射规则。
 

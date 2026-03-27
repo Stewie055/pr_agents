@@ -8,7 +8,11 @@ from pr_agents.agent.runtime import AgentRuntime
 from pr_agents.application.tasks import TaskApplicationService
 from pr_agents.infrastructure import AgentSessionRepository
 from pr_agents.models import (
+    AgentControlState,
     AgentMessageStartResponse,
+    AgentRunControlAction,
+    AgentRunControlRequest,
+    AgentRunControlResponse,
     AgentRunStatus,
     AgentSessionResponse,
     AgentUserMessageRequest,
@@ -78,6 +82,35 @@ class AgentSessionService:
             stream_url=f"/api/v1/agent/sessions/{session_id}/runs/{run.run_id}/stream",
         )
 
+    def create_rerun(
+        self,
+        session_id: str,
+        source_run_id: str,
+        step_id: str | None = None,
+        note: str = "",
+    ) -> AgentMessageStartResponse | None:
+        source_run = self.session_repository.get_run(source_run_id)
+        if source_run is None or source_run.session_id != session_id:
+            return None
+        run = self.session_repository.create_run(
+            session_id=session_id,
+            goal=source_run.goal,
+            intent_mode=self.intent_mode,
+            metadata={
+                "request_content": source_run.goal,
+                "state": "queued",
+                "rerun_source_run_id": source_run_id,
+                "rerun_step_id": step_id,
+                "rerun_note": note,
+            },
+        )
+        return AgentMessageStartResponse(
+            session_id=session_id,
+            run_id=run.run_id,
+            message_id="",
+            stream_url=f"/api/v1/agent/sessions/{session_id}/runs/{run.run_id}/stream",
+        )
+
     async def stream_run_events(self, session_id: str, run_id: str):
         async for event in self.runtime.stream_run_events(session_id, run_id):
             yield event
@@ -101,6 +134,83 @@ class AgentSessionService:
         if artifact is None or artifact.task_id not in task_ids:
             return None
         return self.task_service.read_artifact_content(artifact_id)
+
+    def control_run(
+        self,
+        session_id: str,
+        run_id: str,
+        request: AgentRunControlRequest,
+    ) -> AgentRunControlResponse:
+        run = self.session_repository.get_run(run_id)
+        if run is None or run.session_id != session_id:
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=False,
+                control_state=AgentControlState.RUNNING,
+                message="run not found",
+                run=None,
+            )
+
+        if request.action == AgentRunControlAction.PAUSE:
+            updated = self.session_repository.set_run_control_state(run_id, AgentControlState.PAUSED, request.note)
+            message = "Run paused." if updated else "run not found"
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=updated is not None,
+                control_state=AgentControlState.PAUSED,
+                message=message,
+                run=updated,
+            )
+
+        if request.action == AgentRunControlAction.RESUME:
+            updated = self.session_repository.set_run_control_state(run_id, AgentControlState.RUNNING, request.note)
+            message = "Run resumed." if updated else "run not found"
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=updated is not None,
+                control_state=AgentControlState.RUNNING,
+                message=message,
+                run=updated,
+            )
+
+        metadata = {
+            "last_control_action": request.action.value,
+            "last_control_note": request.note,
+        }
+        if request.step_id:
+            metadata["last_control_step_id"] = request.step_id
+        if request.state_patch:
+            metadata["last_state_patch"] = request.state_patch
+        updated = self.session_repository.merge_run_metadata(run_id, metadata)
+        control_state = AgentControlState((updated.metadata or {}).get("control_state", AgentControlState.RUNNING.value)) if updated else AgentControlState.RUNNING
+        if request.action == AgentRunControlAction.RERUN_STEP:
+            rerun = self.create_rerun(session_id, run_id, request.step_id, request.note)
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=updated is not None and rerun is not None,
+                control_state=control_state,
+                message="Rerun started.",
+                run=updated,
+                spawned_run_id=rerun.run_id if rerun else None,
+                stream_url=rerun.stream_url if rerun else None,
+            )
+        return AgentRunControlResponse(
+            session_id=session_id,
+            run_id=run_id,
+            action=request.action,
+            applied=updated is not None,
+            control_state=control_state,
+            message="State modification request recorded.",
+            run=updated,
+        )
 
     @staticmethod
     def _format_event(event) -> str:

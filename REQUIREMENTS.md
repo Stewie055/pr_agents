@@ -41,6 +41,7 @@
 - 当前受限环境下，至少应保证前端构建通过，并通过 Python API/SSE 相关自动化测试覆盖关键状态映射。
 - Workbench 必须同时承载过程区与结果工件区，聊天区不承担最终图表与报告展示。
 - Debug Drawer 必须默认弱化存在感，但支持整体折叠、内部模块折叠和未来执行控制扩展。
+- `Execution Controls` 至少要具备后端控制骨架，支持 `Pause / Resume` 状态切换，并能记录 `Rerun Step / Modify State` 请求。
 - 页面至少要支持 `empty / running / paused / error / completed` 5 种状态。
 - WebUI 默认应优先展示 assistant 最终回复，执行轨迹和报告正文采用折叠详情展示，避免同一轮任务重复输出。
 - 官方 demo 至少应覆盖两条主线：文件分析和数据库分析，并支持报告重看与报告摘要追问。

@@ -376,6 +376,8 @@ export function useAgentWorkspace() {
     saveActiveSession()
     upsertSessionMeta(sessionId.value, summarizeMessages(payload.messages))
     const latestRun = payload.runs?.[0]
+    executionState.paused = latestRun?.metadata?.control_state === 'paused'
+    executionState.overrideState = executionState.paused ? 'paused' : executionState.overrideState === 'paused' ? null : executionState.overrideState
     if (!liveRun.value && latestRun) {
       processState.currentStageId = latestRun.status === 'succeeded' ? 'generate-report' : processState.currentStageId
       processState.flowNodes = buildFlowNodes(processState, workspaceState.value)
@@ -403,10 +405,7 @@ export function useAgentWorkspace() {
     if (step) mutate(step)
   }
 
-  async function sendMessage(content) {
-    const trimmed = (content || '').trim()
-    if (!trimmed) return
-    if (!sessionId.value) await createSession()
+  function resetLiveState() {
     closeStream()
     liveRun.value = null
     liveAssistant.value = null
@@ -422,21 +421,9 @@ export function useAgentWorkspace() {
     startElapsedTimer()
     executionState.overrideState = null
     executionState.modified = false
-    sessionData.value.messages = [
-      ...(sessionData.value.messages || []),
-      { message_id: `local-${Date.now()}`, role: 'user', message_type: 'chat', content: trimmed, metadata: {} },
-    ]
-    promptSnapshot.taskIntent = trimmed
-    promptSnapshot.subGoal = 'Preparing diagnostic run.'
-    memorySnapshot.currentFocus = trimmed
-    renderStatusText('Queued...')
-    const response = await fetch(`/api/v1/agent/sessions/${sessionId.value}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: trimmed }),
-    })
-    const payload = await response.json()
-    prompt.value = ''
+  }
+
+  async function subscribeToRun(streamUrl) {
     const controller = new AbortController()
     liveAssistantController.value = controller
 
@@ -580,6 +567,22 @@ export function useAgentWorkspace() {
         renderStatusText('Step failed.')
         return
       }
+      if (eventName === 'run_paused') {
+        executionState.paused = true
+        executionState.overrideState = 'paused'
+        updateStatusBar({ status: 'Paused' })
+        renderStatusText('Paused.')
+        appendTaskLog(payload.data.message || 'Run paused', 'warning', payload.timestamp)
+        return
+      }
+      if (eventName === 'run_resumed') {
+        executionState.paused = false
+        executionState.overrideState = null
+        updateStatusBar({ status: 'Running' })
+        renderStatusText('Running...')
+        appendTaskLog(payload.data.message || 'Run resumed', 'info', payload.timestamp)
+        return
+      }
       if (eventName === 'assistant_started') {
         ensureLiveAssistant(payload.run_id)
         liveAssistant.value.content = ''
@@ -628,7 +631,7 @@ export function useAgentWorkspace() {
 
     ;(async () => {
       try {
-        const streamResponse = await fetch(payload.stream_url, {
+        const streamResponse = await fetch(streamUrl, {
           headers: { Accept: 'text/event-stream' },
           signal: controller.signal,
         })
@@ -663,6 +666,29 @@ export function useAgentWorkspace() {
     })()
   }
 
+  async function sendMessage(content) {
+    const trimmed = (content || '').trim()
+    if (!trimmed) return
+    if (!sessionId.value) await createSession()
+    resetLiveState()
+    sessionData.value.messages = [
+      ...(sessionData.value.messages || []),
+      { message_id: `local-${Date.now()}`, role: 'user', message_type: 'chat', content: trimmed, metadata: {} },
+    ]
+    promptSnapshot.taskIntent = trimmed
+    promptSnapshot.subGoal = 'Preparing diagnostic run.'
+    memorySnapshot.currentFocus = trimmed
+    renderStatusText('Queued...')
+    const response = await fetch(`/api/v1/agent/sessions/${sessionId.value}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: trimmed }),
+    })
+    const payload = await response.json()
+    prompt.value = ''
+    await subscribeToRun(payload.stream_url)
+  }
+
   function onFilesSelected(files) {
     uploadedFiles.value = [...files]
   }
@@ -683,33 +709,78 @@ export function useAgentWorkspace() {
     sendMessage('Please summarize the report key points.')
   }
 
-  function pauseRun() {
+  async function requestRunControl(action, extra = {}) {
+    const runId = currentRun.value?.run_id
+    if (!sessionId.value || !runId) {
+      renderStatusText('No active run.')
+      return null
+    }
+    const response = await fetch(`/api/v1/agent/sessions/${sessionId.value}/runs/${runId}/control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...extra }),
+    })
+    if (!response.ok) {
+      renderStatusText('Control request failed.')
+      return null
+    }
+    const payload = await response.json()
+    await refreshSession()
+    return payload
+  }
+
+  async function pauseRun() {
+    const payload = await requestRunControl('pause', { note: 'Paused from debug drawer.' })
+    if (!payload?.applied) return
     executionState.paused = true
     executionState.overrideState = 'paused'
     updateStatusBar({ status: 'Paused' })
-    renderStatusText('Paused (mock control).')
+    renderStatusText('Pause requested.')
   }
 
-  function resumeRun() {
+  async function resumeRun() {
+    const payload = await requestRunControl('resume', { note: 'Resumed from debug drawer.' })
+    if (!payload?.applied) return
     executionState.paused = false
     executionState.overrideState = null
     updateStatusBar({ status: currentRun.value?.status === 'succeeded' ? 'Completed' : 'Running' })
-    renderStatusText('Resumed (mock control).')
+    renderStatusText('Resume requested.')
   }
 
-  function rerunStep() {
-    const latestUser = [...(sessionData.value.messages || [])].reverse().find((message) => message.role === 'user')
-    if (latestUser) sendMessage(latestUser.content)
+  async function rerunStep() {
+    const rerunGoal = currentRun.value?.goal || sessionData.value.messages.at(-1)?.content || 'Rerun step'
+    const stepId = currentRun.value?.steps?.at(-1)?.step_id || null
+    const payload = await requestRunControl('rerun_step', {
+      step_id: stepId,
+      note: 'Rerun requested from debug drawer.',
+    })
+    if (!payload?.applied) return
+    resetLiveState()
+    promptSnapshot.taskIntent = rerunGoal
+    promptSnapshot.subGoal = 'Preparing rerun.'
+    renderStatusText(payload.message)
+    if (payload.stream_url) {
+      await subscribeToRun(payload.stream_url)
+    }
   }
 
-  function modifyState() {
-    executionState.modified = !executionState.modified
-    executionState.overrideState = executionState.modified ? 'error' : null
-    memorySnapshot.tentativeConclusions = executionState.modified
+  async function modifyState() {
+    const nextModified = !executionState.modified
+    const payload = await requestRunControl('modify_state', {
+      note: nextModified ? 'Operator marked the run for manual review.' : 'Manual review cleared.',
+      state_patch: {
+        manual_review: nextModified,
+        warning: nextModified ? 'Review the previous anomaly verdict before finalizing the report.' : '',
+      },
+    })
+    if (!payload?.applied) return
+    executionState.modified = nextModified
+    executionState.overrideState = nextModified ? 'error' : null
+    memorySnapshot.tentativeConclusions = nextModified
       ? ['Operator adjusted the state manually. Review the previous anomaly verdict before finalizing the report.']
       : []
-    updateStatusBar({ status: executionState.modified ? 'Warning' : 'Running' })
-    renderStatusText(executionState.modified ? 'State modified (mock).' : 'State reset.')
+    updateStatusBar({ status: nextModified ? 'Warning' : 'Running' })
+    renderStatusText(payload.message)
   }
 
   onMounted(async () => {

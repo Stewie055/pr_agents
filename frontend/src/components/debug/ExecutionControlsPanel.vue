@@ -16,6 +16,6 @@ const emit = defineEmits(['toggle', 'pause', 'resume', 'rerun', 'modify'])
       <button class="control-button" data-testid="control-rerun" @click="emit('rerun')">Rerun Step</button>
       <button class="control-button warning" data-testid="control-modify" @click="emit('modify')">Modify State</button>
     </div>
-    <p class="debug-empty">Mock controls for future real execution hooks. Current paused={{ controls.paused }}, modified={{ controls.modified }}</p>
+    <p class="debug-empty">Run controls are connected to the backend control skeleton. Current paused={{ controls.paused }}, modified={{ controls.modified }}</p>
   </details>
 </template>

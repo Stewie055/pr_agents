@@ -19,9 +19,11 @@
   - `Report Preview`
 - 右侧 `Debug Drawer`
   - 默认收起
-  - 支持查看工具调用、prompt 摘要、memory 状态和 mock execution controls
+  - 支持查看工具调用、prompt 摘要、memory 状态和 execution controls
 - 底部 `Global Status Bar`
   - 展示当前步骤、当前工具、运行状态和耗时
+  - `Pause / Resume` 可直接切换运行状态
+  - `Rerun Step` 会重新拉起一轮流式执行
 
 官方 demo 仍保留两条主线：
 

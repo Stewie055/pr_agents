@@ -24,6 +24,8 @@
   仅向模型暴露 workflow-level tools：文件分析、数据库分析、加载最近报告、概括最近报告
 - `Event Stream`
   将 run 生命周期、步骤状态和关键 tool 结果通过 SSE 推给前端
+- `Run Control`
+  提供 run 级控制骨架，当前支持 `Pause / Resume` 状态切换，并记录 `Rerun Step / Modify State` 请求元数据
 
 ### Tool
 
@@ -61,6 +63,7 @@
 - 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 只使用注入后的模型，不在上层散布分支。
 - 单个 `PydanticAI Agent` 的决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
 - 前端发送消息时采用“POST 创建 run + GET SSE 订阅”模式，而不是等待整包 JSON 响应。
+- 前端的 `Execution Controls` 已接到后端 run control 接口；当前实现为协作式控制，优先在步骤边界和文本流边界生效。
 - WebUI 展示层采用“左侧交流、右侧工作、调试抽屉弱化、底部状态栏固定”的工作台策略。
 - 前端状态模型显式分为：
   - `workspaceState`

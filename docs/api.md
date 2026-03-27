@@ -73,7 +73,16 @@
   - Prompt Snapshot
   - Memory State
   - Execution Controls
-- `Execution Controls` 当前为 mock 控件，后续接真实暂停/恢复接口时可直接替换
+- `Execution Controls` 当前已接到后端 run control 骨架，支持 `Pause / Resume` 和结构化控制请求记录
+
+新增运行控制接口：
+
+- `POST /api/v1/agent/sessions/{session_id}/runs/{run_id}/control`
+  - `action = pause | resume | rerun_step | modify_state`
+  - 第一版支持真实落库与状态同步
+  - `Pause / Resume` 会更新 run 的控制状态
+  - `Rerun Step` 会创建新的 rerun run，并返回新的 `spawned_run_id` 与 `stream_url`
+  - `Modify State` 会记录结构化控制请求，供后续真实执行控制实现使用
 
 ## Model Mode 配置
 

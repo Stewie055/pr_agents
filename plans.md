@@ -166,7 +166,10 @@
   - `components/debug/*`
   - `components/layout/*`
 - `Debug Drawer` 整体可折叠，内部模块也支持单独折叠。
-- `Execution Controls` 当前通过 mock 交互提供 `Pause / Resume / Rerun Step / Modify State`，为后续真实 agent 控制接口预留挂接点。
+- `Execution Controls` 已接入后端 run control 骨架：
+  - `Pause / Resume` 支持真实状态切换
+  - `Rerun Step` 会拉起新的 rerun run 并重新进入流式执行
+  - `Modify State` 记录结构化控制请求，供后续真实执行控制扩展
 - 可选浏览器级回归扩展到页面状态和工作台交互，而不只验证文本流。
 
 ## 下一阶段建议

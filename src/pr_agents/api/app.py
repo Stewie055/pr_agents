@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.models import (
+    AgentRunControlRequest,
     AgentUserMessageRequest,
     DatabaseAnalysisRequest,
     FileAnalysisRequest,
@@ -96,6 +97,13 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
+
+    @app.post("/api/v1/agent/sessions/{session_id}/runs/{run_id}/control")
+    def control_agent_run(session_id: str, run_id: str, request: AgentRunControlRequest):
+        response = agent_session_service.control_run(session_id, run_id, request)
+        if not response.applied and response.message == "run not found":
+            raise HTTPException(status_code=404, detail="run not found")
+        return response
 
     @app.get("/api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content")
     def read_agent_session_artifact_content(session_id: str, artifact_id: str):

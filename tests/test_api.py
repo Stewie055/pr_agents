@@ -324,6 +324,67 @@ def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
     assert "Analysis completed" in report_response.text
 
 
+def test_agent_run_control_endpoints_update_run_metadata(tmp_path: Path) -> None:
+    app = build_api_app(build_test_settings(tmp_path))
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    start_payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+    ).json()
+    run_id = start_payload["run_id"]
+
+    pause_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/runs/{run_id}/control",
+        json={"action": "pause", "note": "pause for inspection"},
+    )
+    assert pause_response.status_code == 200
+    assert pause_response.json()["control_state"] == "paused"
+
+    rerun_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/runs/{run_id}/control",
+        json={"action": "rerun_step", "step_id": "step-demo", "note": "rerun the last step"},
+    )
+    assert rerun_response.status_code == 200
+    assert rerun_response.json()["applied"] is True
+    assert rerun_response.json()["message"] == "Rerun started."
+    assert rerun_response.json()["spawned_run_id"] is not None
+    assert rerun_response.json()["stream_url"] is not None
+
+    rerun_events = consume_sse(client, rerun_response.json()["stream_url"])
+    rerun_event_names = [event["event"] for event in rerun_events]
+    assert "run_started" in rerun_event_names
+    assert "tool_called" in rerun_event_names
+    assert "run_completed" in rerun_event_names
+
+    modify_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/runs/{run_id}/control",
+        json={
+            "action": "modify_state",
+            "note": "manual review",
+            "state_patch": {"manual_review": True},
+        },
+    )
+    assert modify_response.status_code == 200
+    assert modify_response.json()["applied"] is True
+
+    resume_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/runs/{run_id}/control",
+        json={"action": "resume", "note": "continue"},
+    )
+    assert resume_response.status_code == 200
+    assert resume_response.json()["control_state"] == "running"
+
+    payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
+    original_run = next(run for run in payload["runs"] if run["run_id"] == run_id)
+    rerun = next(run for run in payload["runs"] if run["run_id"] == rerun_response.json()["spawned_run_id"])
+    assert original_run["metadata"]["control_state"] == "running"
+    assert original_run["metadata"]["last_control_action"] == "modify_state"
+    assert original_run["metadata"]["last_state_patch"]["manual_review"] is True
+    assert rerun["metadata"]["rerun_source_run_id"] == run_id
+
+
 def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> None:
     settings = build_test_settings(tmp_path)
     app = build_api_app(settings)

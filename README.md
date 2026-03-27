@@ -86,7 +86,10 @@ cd frontend && pnpm dev
 - 聊天区只负责交流与轻量状态反馈，不再承担图表和报告正文展示
 - 任务执行中，Workbench 会先刷新过程区，再逐步补齐结果工件
 - `Debug Drawer` 默认收起，内部模块也支持单独折叠
-- 当前 `Execution Controls` 为 mock 交互，用于预留未来真实暂停/恢复/重跑接口
+- 当前 `Execution Controls` 已接入后端控制骨架：
+  - `Pause / Resume` 支持真实状态切换
+  - `Rerun Step` 会拉起一个新的 rerun run 并重新进入流式执行
+  - `Modify State` 会记录结构化状态 patch，供后续真实运行时消费
 - 组件职责与扩展位置见：
   - [`frontend/README.md`](/root/projects/pr_agents/frontend/README.md)
 
