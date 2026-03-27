@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -94,9 +95,10 @@ def _chat_reply(content: str) -> str:
     return "我可以直接回复，也可以调用分析工作流。你可以试试文件 demo、数据库 demo，或者让我概括最近的报告。"
 
 
-async def _yield_text(content: str, chunk_size: int = 24) -> AsyncIterator[str]:
+async def _yield_text(content: str, chunk_size: int = 12) -> AsyncIterator[str]:
     text = content or ""
     for index in range(0, len(text), chunk_size):
+        await asyncio.sleep(0.15)
         yield text[index : index + chunk_size]
 
 

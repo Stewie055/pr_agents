@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from pr_agents.application import AgentSessionService, TaskApplicationService
 from pr_agents.models import (
@@ -10,15 +13,33 @@ from pr_agents.models import (
     FileAnalysisRequest,
     SessionTasksResponse,
 )
-from pr_agents.webui import render_agent_demo_page
+
+
+def _frontend_dist_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
 def create_api_app(task_service: TaskApplicationService, agent_session_service: AgentSessionService) -> FastAPI:
     app = FastAPI(title="pr_agents API", version="0.1.0")
+    frontend_dist_dir = _frontend_dist_dir()
+    assets_dir = frontend_dist_dir / "assets"
+
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
 
     @app.get("/", response_class=HTMLResponse)
     def webui_home():
-        return render_agent_demo_page(agent_session_service.intent_mode)
+        index_path = frontend_dist_dir / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+        return HTMLResponse(
+            (
+                "<html><body><h1>frontend not built</h1>"
+                "<p>Build the Vue app with <code>cd frontend && npm install && npm run build</code>.</p>"
+                "</body></html>"
+            ),
+            status_code=503,
+        )
 
     @app.post("/api/v1/tasks/file-analysis")
     def submit_file_analysis(request: FileAnalysisRequest):

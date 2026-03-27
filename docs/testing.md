@@ -25,6 +25,8 @@
 - `assistant_started / assistant_delta / assistant_completed` 的增量回复示例
 - WebUI “运行中独立工具卡片区 + 完成后折叠 Task details” 展示示例
 - 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
+- Vue WebUI 浏览器级流式展示示例
+- Playwright 直接验证 `assistant_delta` 可见增长与 `Task in progress` 先出现示例
 
 ## 运行
 
@@ -32,7 +34,16 @@
 uv run pytest
 ```
 
+浏览器级回归：
+
+```bash
+cd frontend
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
 ## 测试策略
 
 - 通过 stub service 确保当前仓库无需 QT 代码即可完成最小闭环验证。
 - 后续接入 QT 真实实现后，应保留现有契约测试并新增适配器测试。
+- 浏览器级流式行为必须通过 Playwright 回归验证，不能只以 SSE 事件存在性代替真实用户可见效果。

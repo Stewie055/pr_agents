@@ -188,23 +188,9 @@ def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Agent Workspace" in response.text
-    assert "New chat" in response.text
-    assert "session-list" in response.text
-    assert "prompt" in response.text
-    assert "Run File Demo" in response.text
-    assert "Run DB Demo" in response.text
-    assert "Summarize report" in response.text
-    assert "/api/v1/agent/sessions" in response.text
-    assert "EventSource" in response.text
-    assert "Queued..." in response.text
-    assert "Task details" in response.text
-    assert "Task in progress" in response.text
-    assert "data-live-run" in response.text
-    assert "report_preview" in response.text
-    assert "filter(function (message)" in response.text
-    assert "Intent mode:" in response.text
-    assert "assistant_delta" in response.text
+    assert '<div id="app"></div>' in response.text
+    assert "/assets/" in response.text
+    assert "pr_agents Agent Workspace" in response.text
 
 
 def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:

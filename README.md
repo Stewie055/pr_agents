@@ -19,11 +19,14 @@
 
 - `uv`
 - Python 3.11+
+- Node.js 20+
+- `pnpm`
 
 安装依赖：
 
 ```bash
 uv sync --python 3.11
+cd frontend && pnpm install
 ```
 
 运行测试：
@@ -35,7 +38,14 @@ uv run pytest
 启动 API：
 
 ```bash
+cd frontend && pnpm build
 uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn; uvicorn.run(build_api_app(), host='127.0.0.1', port=8000)"
+```
+
+前端开发模式：
+
+```bash
+cd frontend && pnpm dev
 ```
 
 ## Run Demo
@@ -55,7 +65,7 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 
 ## WebUI Demo
 
-现在默认用户入口是聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。对外展示时，推荐使用 `llm` 模式启动。
+现在默认用户入口是独立 `Vue + Vite` 的聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。对外展示时，推荐使用 `llm` 模式启动。
 
 - 打开 `http://<机器IP>:8000/`
 - 左侧是会话列表和 `New chat`
@@ -73,6 +83,7 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
 - 普通聊天默认不调用工具；只有明确任务请求才进入计划和执行
 - 只有任务型请求会显示运行轨迹卡；普通聊天不再重复显示 run 摘要
 - WebUI 现在通过 `SSE` 流式接收 Agent 事件，不再等整包 JSON 返回后一次性刷新
+- 前端独立维护三类状态：已持久化消息、运行中的工具区、运行中的 assistant 文本
 - 明确任务请求会优先走本地 fast-path，提前显示 `Queued / Routing / Planning` 状态，减少长时间无反馈
 
 如果需要调试底层接口，再访问：
@@ -134,6 +145,22 @@ uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn;
    - `session_snapshot`
 
 因此普通聊天会直接进入 assistant 文本流；任务型请求会先显示独立的工具/步骤卡片区，再在工具完成后继续输出 assistant 回复。
+
+## Frontend Testing
+
+浏览器级流式回归使用 Playwright：
+
+```bash
+cd frontend
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+这些用例会直接验证：
+
+- 普通聊天时 assistant 文本长度逐步增长
+- 工具型请求时先出现 `Task in progress`
+- 工具完成后 assistant 文本继续增长
 
 相关环境变量：
 

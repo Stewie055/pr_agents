@@ -25,7 +25,7 @@
 - `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content`
   读取当前会话内的报告内容
 - `GET /`
-  返回聊天式 Agent WebUI
+  返回构建后的 Vue 聊天式 Agent WebUI
 
 ## 第一版约束
 
@@ -55,12 +55,13 @@
 
 ## Agent Demo
 
-当前用户主入口是根路径 `/` 的聊天式 WebUI。
+当前用户主入口是根路径 `/` 的 Vue 聊天式 WebUI。
 
 - 页面内可直接创建会话
 - 可一键运行两条官方示例：
   - `Run File Demo`
   - `Run DB Demo`
+- 页面由独立 `Vue + Vite` SPA 实现，FastAPI 负责托管构建产物
 - 会展示：
   - 用户消息
   - Agent 最终回复
@@ -144,3 +145,12 @@
 - 工具型请求先用 `step_started / tool_called / tool_result` 增量更新独立工具卡片区
 - assistant 回复通过 `assistant_started / assistant_delta / assistant_completed` 增量渲染
 - 最后再用 `run_completed / session_snapshot` 对齐持久化状态
+
+前端开发与测试命令：
+
+```bash
+cd frontend
+pnpm install
+pnpm build
+pnpm test:e2e
+```

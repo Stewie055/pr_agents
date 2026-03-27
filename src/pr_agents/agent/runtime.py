@@ -399,8 +399,7 @@ class AgentRuntime:
                     final_text = (deps.assistant_text or deps.pending_preamble or str(result.output)).strip()
                 if final_text and not deps.assistant_started:
                     await deps.emit("assistant_started", {"mode": "single"})
-                    for chunk in self._chunk_text(final_text):
-                        await deps.emit("assistant_delta", {"delta": chunk})
+                    await self._emit_text_stream(deps, final_text)
                 message = self.session_repository.add_message(
                     session_id,
                     MessageRole.ASSISTANT,
@@ -510,7 +509,12 @@ class AgentRuntime:
         )
 
     @staticmethod
-    def _chunk_text(content: str, chunk_size: int = 32):
+    def _chunk_text(content: str, chunk_size: int = 16):
         text = content or ""
         for index in range(0, len(text), chunk_size):
             yield text[index : index + chunk_size]
+
+    async def _emit_text_stream(self, deps: AgentDeps, content: str, delay: float = 0.15) -> None:
+        for chunk in self._chunk_text(content):
+            await deps.emit("assistant_delta", {"delta": chunk})
+            await asyncio.sleep(delay)

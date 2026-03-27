@@ -130,6 +130,21 @@
 - 前端只在 run 完成后再对齐最终 session 快照，避免工具卡闪烁和重复渲染。
 - 实时工具流不再依赖 assistant 气泡承接，而是使用独立工具区展示，避免页面只剩 `Thinking...`。
 
+## 第十六阶段计划与实现
+
+- 将 WebUI 从 FastAPI 内嵌 HTML 重构为独立的 `Vue + Vite` SPA。
+- 保留后端 `FastAPI + SSE + PydanticAI Agent` 主链路，不引入 WebSocket。
+- 前端正式区分三类状态：
+  - 已持久化消息
+  - 运行中的工具区
+  - 运行中的 assistant 文本
+- 根路径 `/` 在构建后直接返回 `frontend/dist/index.html`，静态资源由 FastAPI 托管。
+- 引入 Playwright 浏览器级回归测试，显式验证：
+  - 普通聊天正文长度逐步增长
+  - 工具型请求先出现 `Task in progress`
+  - 工具完成后 assistant 文本继续增长
+- 构建链改为 `pnpm`，前端锁文件改为 `pnpm-lock.yaml`。
+
 ## 下一阶段建议
 
 - 增加真实 QT Service 适配器。
