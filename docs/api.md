@@ -14,6 +14,8 @@
   查询 artifact 元数据
 - `GET /api/v1/artifacts/{artifact_id}/content`
   读取文本类产物内容
+- `GET /api/v1/artifacts/{artifact_id}/raw`
+  读取原始 artifact 内容，可用于图表 SVG 和其他非文本资源
 - `POST /api/v1/agent/sessions`
   创建 Agent 聊天会话
 - `GET /api/v1/agent/sessions/{session_id}`
@@ -24,14 +26,16 @@
   通过 `SSE` 流式读取 Agent 事件
 - `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/content`
   读取当前会话内的报告内容
+- `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/raw`
+  读取当前会话内的原始 artifact 内容
 - `GET /`
-  返回构建后的 Vue 聊天式 Agent WebUI
+  返回构建后的 React 工作台
 
 ## 第一版约束
 
 - 使用 JSON 请求，不支持 multipart 上传
 - 使用同步执行模型
-- 只支持文本类 artifact 内联读取
+- 既支持文本内容读取，也支持原始 artifact 读取
 - 不包含鉴权、限流和异步队列
 
 ## 业务参数约定
@@ -53,30 +57,14 @@
 
 当前 API 层只做参数承接和透传，不解释业务规则。
 
-## Agent Demo
+## WebUI
 
-当前用户主入口是根路径 `/` 的 Vue 聊天式 WebUI。
+当前用户主入口是根路径 `/` 的 React 诊断工作台。
 
-- 页面内可直接创建会话
-- 可一键运行两条官方示例：
-  - `Run File Demo`
-  - `Run DB Demo`
-- 页面由独立 `Vue + Vite` SPA 实现，FastAPI 负责托管构建产物
-- 会展示：
-  - 用户消息
-  - Agent 最终回复
-  - 运行中的独立工具卡片区
-  - 完成后的折叠 `Task details`
-- 页面刷新后会优先恢复最近活动 session
-- 页面顶部会显示当前 `Intent mode`
-- 普通聊天消息不会触发任务，也不会出现 tool_call
-- 任务型消息会在 session 响应中返回 `runs`，其中包含计划状态和步骤摘要
-- WebUI 不再等待整包消息执行完成，而是订阅 run 的 `SSE` 事件流
-- WebUI 默认不把 `plan`、`tool_call`、`tool_result` 直接渲染成主消息
-- 任务执行中会在消息流尾部显示独立工具卡片区；完成后该 run 会收敛到 assistant 回复下方的折叠详情里
-- 页面内还提供两类标准追问：
-  - `Show latest report`
-  - `Summarize report`
+- 左侧 `Chat Panel` 承接对话与轻量工具状态
+- 右侧 `Workbench` 承接运行时间线、表格、图表和报告预览
+- 右侧 `Debug Drawer` 承接 tool calls、prompt snapshot 和 memory snapshot
+- 开发模式采用 `Vite` 代理 `/api` 到 FastAPI
 
 ## Model Mode 配置
 
@@ -115,6 +103,8 @@
   - `status`
   - `summary`
   - `steps`
+  - `metadata.prompt_snapshot`
+  - `metadata.memory_snapshot`
 
 普通聊天只会追加 `messages`；任务型请求才会创建 `runs` 和 `tasks`。这些行为由单一 `PydanticAI Agent` 的决策驱动，而不是 API 层的硬编码分流。
 
@@ -140,17 +130,4 @@
 - `run_failed`
 - `session_snapshot`
 
-当前前端会直接消费这些事件：
-
-- 工具型请求先用 `step_started / tool_called / tool_result` 增量更新独立工具卡片区
-- assistant 回复通过 `assistant_started / assistant_delta / assistant_completed` 增量渲染
-- 最后再用 `run_completed / session_snapshot` 对齐持久化状态
-
-前端开发与测试命令：
-
-```bash
-cd frontend
-pnpm install
-pnpm build
-pnpm test:e2e
-```
+后续新的前端设计仍应直接消费这些事件。

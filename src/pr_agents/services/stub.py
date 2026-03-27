@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from uuid import uuid4
 
 from pr_agents.infrastructure import ArtifactStore
@@ -146,11 +147,42 @@ class StubAnalysisPlatform(AnalysisPlatform):
         request: AnalysisRequest,
     ) -> ChartArtifact:
         chart_type = request.chart_profile.get("chart_type", "bar")
+        series = [10, 20, 16]
+        labels = ["Input", "Model", "Report"]
+        max_value = max(series)
+        svg_bars = []
+        for index, value in enumerate(series):
+            height = int((value / max_value) * 170)
+            x = 70 + index * 120
+            y = 230 - height
+            svg_bars.append(
+                f'<rect x="{x}" y="{y}" width="64" height="{height}" rx="14" fill="#1f6feb" opacity="{0.92 - index * 0.1:.2f}" />'
+            )
+            svg_bars.append(
+                f'<text x="{x + 32}" y="252" text-anchor="middle" font-size="13" fill="#334155">{escape(labels[index])}</text>'
+            )
+            svg_bars.append(
+                f'<text x="{x + 32}" y="{y - 10}" text-anchor="middle" font-size="12" fill="#0f172a">{value}</text>'
+            )
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="280" viewBox="0 0 480 280">'
+            '<defs><linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">'
+            '<stop offset="0%" stop-color="#eff6ff" /><stop offset="100%" stop-color="#dbeafe" />'
+            "</linearGradient></defs>"
+            '<rect width="480" height="280" rx="24" fill="url(#bg)" />'
+            '<text x="32" y="42" font-size="20" font-family="Arial, sans-serif" fill="#0f172a">'
+            f'{escape(request.business_code)} {escape(chart_type)}</text>'
+            '<text x="32" y="68" font-size="13" font-family="Arial, sans-serif" fill="#475569">'
+            f'{escape(analysis.summary)}</text>'
+            '<line x1="52" y1="230" x2="432" y2="230" stroke="#94a3b8" stroke-width="2" />'
+            + "".join(svg_bars)
+            + "</svg>"
+        )
         artifact = self.artifact_store.save_text(
             context,
             ArtifactType.CHART,
-            f"{request.business_code}_{chart_type}.json",
-            f'{{"type":"{chart_type}","series":[10,20]}}',
+            f"{request.business_code}_{chart_type}.svg",
+            svg,
         )
         return ChartArtifact(
             chart_id=f"chart-{uuid4().hex[:8]}",
@@ -163,6 +195,8 @@ class StubAnalysisPlatform(AnalysisPlatform):
                 "business_code": request.business_code,
                 "plot_family": "scientific" if chart_type == "scientific_plot" else "standard",
                 "chart_profile": request.chart_profile,
+                "series": series,
+                "labels": labels,
             },
         )
 

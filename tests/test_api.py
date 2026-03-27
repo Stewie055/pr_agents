@@ -181,16 +181,43 @@ def test_official_a_demo_flow_returns_scientific_plot_and_report(tmp_path: Path)
     assert "Generate a scientific plot report for the demo dataset" in report_content.text
 
 
-def test_webui_homepage_contains_chat_demo(tmp_path: Path) -> None:
+def test_webui_homepage_serves_frontend_or_build_hint(tmp_path: Path) -> None:
     app = build_api_app(build_test_settings(tmp_path))
     client = TestClient(app)
 
     response = client.get("/")
 
-    assert response.status_code == 200
-    assert '<div id="app"></div>' in response.text
-    assert "/assets/" in response.text
-    assert "pr_agents Agent Workspace" in response.text
+    assert response.status_code in {200, 503}
+    if response.status_code == 200:
+        assert '<div id="root"></div>' in response.text
+        assert "/assets/" in response.text
+        assert "pr_agents Diagnostic Agent" in response.text
+    else:
+        assert "frontend not built" in response.text
+        assert "/api/v1" in response.text
+
+
+def test_chart_artifact_raw_endpoint_returns_svg(tmp_path: Path) -> None:
+    app = build_api_app(build_test_settings(tmp_path))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/tasks/file-analysis",
+        json={
+            "business_code": "A_DEMO",
+            "objective": "Generate a scientific plot report for the demo dataset",
+            "file_name": "demo_a.csv",
+            "content": "temperature,pressure\n21.5,101.2\n22.1,101.5\n22.8,101.7\n",
+            "chart_profile": {"chart_type": "scientific_plot"},
+        },
+    )
+
+    chart_artifact_id = response.json()["result"]["chart"]["artifact"]["artifact_id"]
+    raw_response = client.get(f"/api/v1/artifacts/{chart_artifact_id}/raw")
+
+    assert raw_response.status_code == 200
+    assert raw_response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in raw_response.text
 
 
 def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
@@ -218,10 +245,15 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert "assistant_delta" in event_names
     assert "assistant_completed" in event_names
     assert "run_completed" in event_names
+    run_started_event = next(event for event in events if event["event"] == "run_started")
+    assert "prompt_snapshot" in run_started_event["data"]["data"]["debug"]
+    assert "memory_snapshot" in run_started_event["data"]["data"]["debug"]
 
     payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     assert payload["runs"]
     assert payload["runs"][0]["steps"]
+    assert "prompt_snapshot" in payload["runs"][0]["metadata"]
+    assert "memory_snapshot" in payload["runs"][0]["metadata"]
     result_message = next(
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )

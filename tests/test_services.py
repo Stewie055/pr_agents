@@ -51,7 +51,8 @@ def test_stub_platform_generates_dataset_chart_and_report(tmp_path: Path) -> Non
     assert dataset.metadata["cleaned"] is True
     assert dataset.metadata["business_code"] == "A001"
     assert chart.chart_type == "scientific_plot"
-    assert chart.artifact.uri.endswith("A001_scientific_plot.json")
+    assert chart.artifact.uri.endswith("A001_scientific_plot.svg")
+    assert Path(chart.artifact.uri).read_text(encoding="utf-8").startswith("<svg")
     assert report.artifact.uri.endswith("A001_report.md")
 
 

@@ -40,87 +40,38 @@ export PR_AGENTS_INTENT_MODE=fake
 http://<机器IP>:8000/
 ```
 
-页面中有两条官方入口：
+前端开发模式：
 
-- `Run File Demo`
-- `Run DB Demo`
+```text
+http://<机器IP>:5173/
+```
+
+调试底层接口时再访问：
+
+```text
+http://<机器IP>:8000/docs
+```
+
+页面结构：
+
+- 左侧 `Chat Panel`
+- 右侧 `Workbench`
+- 右侧 `Debug Drawer`
 
 ## 4. 主线一：文件 demo
 
 推荐操作：
 
-1. 点击 `Run File Demo`
-2. 等待 Agent 返回最终回复
-3. 展开 `Task details`
-4. 查看 `Report preview`
+1. 在聊天区点击 `Run File Demo`
+2. 观察右侧 `Workbench` 依次刷新：
+   - `Run Overview`
+   - `Tool Timeline`
+   - `Metrics Table`
+   - `Chart Preview`
+   - `Report Preview`
+3. 需要排查上下文时打开 `Debug Drawer`
 
-等价 prompt：
-
-```text
-Please use A_DEMO file data to generate a scientific plot and report.
-```
-
-预期结果：
-
-- assistant 最终回复包含 `Completed file analysis for A_DEMO`
-- `Task details` 中包含两步：
-  - `Run file analysis workflow for A_DEMO`
-  - `Summarize workflow results for the user`
-- `Report preview` 中包含：
-  - `business_code=A_DEMO`
-  - 请求 objective
-  - `Analysis completed`
-
-## 5. 主线二：数据库 demo
-
-推荐操作：
-
-1. 点击 `Run DB Demo`
-2. 等待 Agent 返回最终回复
-3. 展开 `Task details`
-4. 查看数据库主线的步骤和报告预览
-
-等价 prompt：
-
-```text
-Please use database data to generate a scientific plot and report for A_DEMO.
-```
-
-预期结果：
-
-- assistant 最终回复包含 `Completed database analysis for A_DEMO`
-- `Task details` 中第一步为：
-  - `Run database analysis workflow for A_DEMO`
-- 当前 stub 查询会使用固定数据库入口语义：
-  - `query_name = demo_query`
-  - `sql = select * from cleaned_demo_data`
-
-## 6. 多轮追问
-
-完成任一主线后，可以继续追问两类标准问题。
-
-查看完整报告：
-
-```text
-Show me the report again.
-```
-
-查看摘要重点：
-
-```text
-Please summarize the report key points.
-```
-
-预期结果：
-
-- `Show me the report again.` 返回完整报告文本
-- `Please summarize the report key points.` 返回摘要文本，并在 metadata 中保留 `report_preview`
-
-## 7. API 调试路径
-
-如果需要调试底层接口，可直接调用同步任务 API。
-
-文件分析：
+等价 API 调用如下：
 
 ```bash
 curl -s http://127.0.0.1:8000/api/v1/tasks/file-analysis \
@@ -145,7 +96,15 @@ curl -s http://127.0.0.1:8000/api/v1/tasks/file-analysis \
 JSON
 ```
 
-数据库分析：
+## 5. 主线二：数据库 demo
+
+推荐操作：
+
+1. 在聊天区点击 `Run DB Demo`
+2. 观察 `Workbench` 以相同结构刷新
+3. 如需查看 prompt 和 memory，打开 `Debug Drawer`
+
+等价 API 调用如下：
 
 ```bash
 curl -s http://127.0.0.1:8000/api/v1/tasks/db-analysis \
@@ -170,13 +129,22 @@ curl -s http://127.0.0.1:8000/api/v1/tasks/db-analysis \
 JSON
 ```
 
-## 8. 排查
+## 6. 多轮追问
 
-- 普通聊天没有执行任务
-  这是正常行为。只有明确分析请求才会进入 plan 和 workflow。
-- 看不到完整报告正文
-  展开 assistant 回复下方的 `Task details`，或继续发送 `Show me the report again.`
+如果要演示 Agent 会话能力，可以先创建 session，再发送标准 prompt：
+
+- `Please use A_DEMO file data to generate a scientific plot and report.`
+- `Please use database data to generate a scientific plot and report for A_DEMO.`
+- `Show me the report again.`
+- `Please summarize the report key points.`
+
+运行事件通过 `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream` 的 SSE 返回。
+
+## 7. 排查
+
+- 根路径没有交互界面
+  先确认是否执行了 `cd frontend && pnpm build`，以及 FastAPI 是否读取到 `frontend/dist`。
 - llm 模式响应慢
-  当前会通过 `SSE` 先显示 `Queued / Routing / Planning`；明显任务还会优先走 fast-path。
+  当前会先看到聊天区轻量状态，再在 `Workbench` 中逐步刷新运行产物。
 - 模型不可用
   可切换到 `fake` 模式，先保证 demo 和业务适配流程跑通。

@@ -33,3 +33,20 @@ class ArtifactStore:
             uri=str(path),
             metadata={"filename": filename},
         )
+
+    def save_bytes(
+        self,
+        context: TaskContext,
+        artifact_type: ArtifactType,
+        filename: str,
+        content: bytes,
+    ) -> ArtifactRef:
+        task_dir = self.task_dir(context)
+        path = task_dir / filename
+        path.write_bytes(content)
+        return ArtifactRef(
+            artifact_id=f"{artifact_type.value}-{uuid4().hex[:8]}",
+            artifact_type=artifact_type,
+            uri=str(path),
+            metadata={"filename": filename},
+        )

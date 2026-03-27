@@ -360,8 +360,6 @@ class AgentRuntime:
             summary="Run started.",
             metadata={"state": "running"},
         )
-        yield self._event("run_started", session_id, run_id, {"goal": request_content, "intent_mode": self.mode})
-
         context = self.context_manager.build_context(session_id, request_content)
         queue: asyncio.Queue[AgentStreamEvent] = asyncio.Queue()
         deps = AgentDeps(
@@ -375,6 +373,38 @@ class AgentRuntime:
             mode=self.mode,
             latest_report_text=context.latest_report_text,
             latest_report_artifact_id=context.latest_report_artifact_id,
+        )
+        debug_metadata = {
+            "prompt_snapshot": {
+                "system_prompt": self._instructions_from_context(context),
+                "user_goal": request_content,
+                "conversation_window": context.model_dump(mode="json")["conversation_window"],
+                "recent_tasks": context.model_dump(mode="json")["recent_tasks"],
+                "recent_artifacts": context.model_dump(mode="json")["recent_artifacts"],
+            },
+            "memory_snapshot": context.memory.model_dump(mode="json"),
+            "context_summary": {
+                "latest_report_summary": context.latest_report_summary,
+                "latest_report_artifact_id": context.latest_report_artifact_id,
+                "recent_message_count": len(context.conversation_window),
+                "recent_task_count": len(context.recent_tasks),
+            },
+        }
+        self.session_repository.update_run(
+            run_id,
+            AgentRunStatus.RUNNING,
+            summary="Run started.",
+            metadata=debug_metadata,
+        )
+        yield self._event(
+            "run_started",
+            session_id,
+            run_id,
+            {
+                "goal": request_content,
+                "intent_mode": self.mode,
+                "debug": debug_metadata,
+            },
         )
 
         async def event_handler(_run_ctx: RunContext[AgentDeps], stream) -> None:
@@ -468,8 +498,11 @@ class AgentRuntime:
 
     @staticmethod
     def _instructions(ctx: RunContext[AgentDeps]) -> str:
-        deps = ctx.deps
-        latest_task = deps.context.memory.mid_term.latest_task_summary
+        return AgentRuntime._instructions_from_context(ctx.deps.context)
+
+    @staticmethod
+    def _instructions_from_context(context: AgentContext) -> str:
+        latest_task = context.memory.mid_term.latest_task_summary
         return (
             "You are a concise data analysis agent. "
             "Reply directly for normal conversation. "
@@ -477,8 +510,8 @@ class AgentRuntime:
             "When a tool is needed, do not send any explanatory preamble before calling the tool. Call the tool first. "
             "After all required tools finish, provide one concise final answer in the user's language without exposing internal implementation details. "
             "Do not call load_latest_report after a successful analysis unless the user explicitly asks to see the report text. "
-            f"Session context: latest_report_available={bool(deps.context.latest_report_artifact_id)}; "
-            f"latest_report_summary={deps.context.latest_report_summary or 'none'}; "
+            f"Session context: latest_report_available={bool(context.latest_report_artifact_id)}; "
+            f"latest_report_summary={context.latest_report_summary or 'none'}; "
             f"latest_task_business_code={latest_task.get('business_code', 'none')}."
         )
 

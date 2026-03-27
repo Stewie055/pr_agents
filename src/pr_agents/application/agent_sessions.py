@@ -102,6 +102,13 @@ class AgentSessionService:
             return None
         return self.task_service.read_artifact_content(artifact_id)
 
+    def read_session_artifact_raw(self, session_id: str, artifact_id: str) -> tuple[bytes, str] | None:
+        task_ids = {task.task_id for task in self.task_service.list_session_tasks(session_id)}
+        artifact = self.task_service.get_artifact(artifact_id)
+        if artifact is None or artifact.task_id not in task_ids:
+            return None
+        return self.task_service.read_artifact_raw(artifact_id)
+
     @staticmethod
     def _format_event(event) -> str:
         return f"event: {event.event}\ndata: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"

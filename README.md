@@ -12,6 +12,7 @@
 - 文件分析、数据库分析、补生成报告三条主工作流
 - FastAPI API 与 SQLite 任务/产物持久化
 - 自动化测试覆盖接口契约、工具调用、工作流、编排与端到端闭环
+- 基于 `React + Vite + TypeScript` 的诊断 Agent 工作台
 
 ## 快速开始
 
@@ -33,19 +34,19 @@ cd frontend && pnpm install
 
 ```bash
 uv run pytest
+cd frontend && pnpm test
 ```
 
 启动 API：
 
 ```bash
-cd frontend && pnpm build
-uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn; uvicorn.run(build_api_app(), host='127.0.0.1', port=8000)"
+uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn; uvicorn.run(build_api_app(), host='0.0.0.0', port=8000)"
 ```
 
 前端开发模式：
 
 ```bash
-cd frontend && pnpm dev
+cd frontend && pnpm dev --host 0.0.0.0 --port 5173 --strictPort
 ```
 
 ## Run Demo
@@ -63,32 +64,20 @@ cd frontend && pnpm dev
 
 - [`docs/demo.md`](/root/projects/pr_agents/docs/demo.md)
 
-## WebUI Demo
+## WebUI
 
-现在默认用户入口是独立 `Vue + Vite` 的聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。对外展示时，推荐使用 `llm` 模式启动。
+当前默认用户入口是独立 `React + Vite + TypeScript` 前端工作台。
 
-- 打开 `http://<机器IP>:8000/`
-- 左侧是会话列表和 `New chat`
-- 右侧是聊天消息流，输入框固定在底部
-- 点击 `Run File Demo` 或 `Run DB Demo`
-- 页面默认只展示用户消息和 Agent 最终回复
-- 任务执行中会先显示独立的工具卡片区；完成后，持久化后的执行细节仍折叠在 assistant 回复下方的 `Task details` 中
-- 报告正文默认放在 `Task details` 的 `Report preview` 中，避免和最终回复重复
-- 可以继续追问：
-  - `Show me the report again.`
-  - `Please summarize the report key points.`
-- 页面刷新后会优先恢复上一次活动会话
-- 最近任务的结果快照会持久化到 SQLite，服务重启后仍可查询
-- 顶部会显示当前 `Intent mode`：`fake` 或 `llm`
-- 普通聊天默认不调用工具；只有明确任务请求才进入计划和执行
-- 只有任务型请求会显示运行轨迹卡；普通聊天不再重复显示 run 摘要
-- WebUI 现在通过 `SSE` 流式接收 Agent 事件，不再等整包 JSON 返回后一次性刷新
-- 前端独立维护三类状态：已持久化消息、运行中的工具区、运行中的 assistant 文本
-- 明确任务请求会优先走本地 fast-path，提前显示 `Queued / Routing / Planning` 状态，减少长时间无反馈
-
-如果需要调试底层接口，再访问：
-
-- `http://<机器IP>:8000/docs`
+- 根路径：`http://<机器IP>:8000/`
+- 前端开发页：`http://<机器IP>:5173/`
+- Swagger：`http://<机器IP>:8000/docs`
+- 页面结构固定为：
+  - 左侧 `Chat Panel`
+  - 右侧 `Workbench`
+  - 右侧 `Debug Drawer`
+- 聊天区只保留对话和轻量工具状态
+- 表格、图表、报告预览统一进入 `Workbench`
+- 调试信息通过默认弱化的 `Debug Drawer` 承接
 
 ## Model Mode
 
@@ -146,21 +135,7 @@ cd frontend && pnpm dev
 
 因此普通聊天会直接进入 assistant 文本流；任务型请求会先显示独立的工具/步骤卡片区，再在工具完成后继续输出 assistant 回复。
 
-## Frontend Testing
-
-浏览器级流式回归使用 Playwright：
-
-```bash
-cd frontend
-pnpm exec playwright install chromium
-pnpm test:e2e
-```
-
-这些用例会直接验证：
-
-- 普通聊天时 assistant 文本长度逐步增长
-- 工具型请求时先出现 `Task in progress`
-- 工具完成后 assistant 文本继续增长
+图表产物当前使用 stub 生成的 `SVG` 文件，前端通过 `raw artifact` 接口直接展示。
 
 相关环境变量：
 
@@ -212,3 +187,5 @@ examples/            演示样例数据
 - `GET /api/v1/sessions/{session_id}/tasks`
 - `GET /api/v1/artifacts/{artifact_id}`
 - `GET /api/v1/artifacts/{artifact_id}/content`
+- `GET /api/v1/artifacts/{artifact_id}/raw`
+- `GET /api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/raw`

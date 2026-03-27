@@ -35,7 +35,8 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
         return HTMLResponse(
             (
                 "<html><body><h1>frontend not built</h1>"
-                "<p>Build the Vue app with <code>cd frontend && npm install && npm run build</code>.</p>"
+                "<p>Build the React app with <code>cd frontend && pnpm install && pnpm build</code>.</p>"
+                "<p>Backend APIs remain available under <code>/api/v1</code>.</p>"
                 "</body></html>"
             ),
             status_code=503,
@@ -77,6 +78,14 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
             raise HTTPException(status_code=404, detail="artifact not found")
         return Response(content=content, media_type="text/plain; charset=utf-8")
 
+    @app.get("/api/v1/artifacts/{artifact_id}/raw")
+    def read_artifact_raw(artifact_id: str):
+        payload = task_service.read_artifact_raw(artifact_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        content, media_type = payload
+        return Response(content=content, media_type=media_type)
+
     @app.post("/api/v1/agent/sessions")
     def create_agent_session():
         return agent_session_service.create_session()
@@ -106,5 +115,13 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
         if content is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         return Response(content=content, media_type="text/plain; charset=utf-8")
+
+    @app.get("/api/v1/agent/sessions/{session_id}/artifacts/{artifact_id}/raw")
+    def read_agent_session_artifact_raw(session_id: str, artifact_id: str):
+        payload = agent_session_service.read_session_artifact_raw(session_id, artifact_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        content, media_type = payload
+        return Response(content=content, media_type=media_type)
 
     return app

@@ -6,3 +6,5 @@ artifacts/
 frontend/node_modules/
 frontend/playwright-report/
 frontend/test-results/
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts

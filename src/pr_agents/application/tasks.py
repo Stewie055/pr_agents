@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
@@ -152,6 +153,16 @@ class TaskApplicationService:
         if suffix not in {".txt", ".md", ".json", ".csv"}:
             raise ValueError("artifact content type is not supported for inline reading")
         return path.read_text(encoding="utf-8")
+
+    def read_artifact_raw(self, artifact_id: str) -> tuple[bytes, str] | None:
+        artifact = self.get_artifact(artifact_id)
+        if artifact is None:
+            return None
+        path = Path(artifact.uri)
+        if not path.exists():
+            return None
+        media_type, _ = mimetypes.guess_type(path.name)
+        return path.read_bytes(), media_type or "application/octet-stream"
 
     def _create_context(self, session_id: str | None, objective: str) -> TaskContext:
         context = TaskContext(user_request=objective)

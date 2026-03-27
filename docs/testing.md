@@ -6,14 +6,14 @@
 - Workflow 编排
 - Tool 调用
 - Agent Orchestration 路由
-- WebUI 端到端闭环
+- WebUI 工作台闭环
 - API 提交、查询、artifact 读取
 - SQLite 持久化与失败状态流转
 - A 类单业务单文件和 B 类共享文件示例
 - `scientific_plot` 图表产物示例
 - 官方 `A_DEMO` demo 闭环示例
 - Agent 会话 API、多轮追问和 WebUI 首页示例
-- 聊天式布局、会话列表和底部输入区示例
+- 诊断工作台布局：左侧聊天区、中间 Notebook 式 Workbench、右侧 Debug Drawer
 - 服务重启后的任务结果恢复示例
 - `FakeLLM` 与 `GLMProvider` 示例
 - fake / llm 双模切换与 fallback 示例
@@ -23,27 +23,22 @@
 - `MemoryManager` 的最近任务与最近报告摘要示例
 - SSE run 启动、事件流顺序和 session 最终一致性示例
 - `assistant_started / assistant_delta / assistant_completed` 的增量回复示例
-- WebUI “运行中独立工具卡片区 + 完成后折叠 Task details” 展示示例
 - 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
-- Vue WebUI 浏览器级流式展示示例
-- Playwright 直接验证 `assistant_delta` 可见增长与 `Task in progress` 先出现示例
+- 前端 React 组件渲染与布局示例
+- 根路径 `/` 托管构建后的前端首页示例
+- chart artifact `raw` 接口返回 SVG 示例
+- run metadata 中的 `prompt_snapshot / memory_snapshot` 示例
 
 ## 运行
 
 ```bash
 uv run pytest
-```
-
-浏览器级回归：
-
-```bash
-cd frontend
-pnpm exec playwright install chromium
-pnpm test:e2e
+cd frontend && pnpm test
+cd frontend && pnpm build
 ```
 
 ## 测试策略
 
 - 通过 stub service 确保当前仓库无需 QT 代码即可完成最小闭环验证。
 - 后续接入 QT 真实实现后，应保留现有契约测试并新增适配器测试。
-- 浏览器级流式行为必须通过 Playwright 回归验证，不能只以 SSE 事件存在性代替真实用户可见效果。
+- 当前环境默认依赖 `uv run pytest + frontend/pnpm test + frontend/pnpm build` 作为交付门槛。
