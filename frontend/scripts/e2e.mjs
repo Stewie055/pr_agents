@@ -56,6 +56,7 @@ async function textGrowth(page, selector, samples = 12, intervalMs = 150) {
 
 async function testDirectReply(page) {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('[data-testid="workbench-empty"]', { timeout: 10000 })
   await page.waitForSelector('[data-testid="prompt"]', { timeout: 10000 })
   await page.fill('[data-testid="prompt"]', '你好')
   await page.click('[data-testid="send-message"]')
@@ -64,6 +65,12 @@ async function testDirectReply(page) {
   const liveRunCount = await page.locator('[data-testid="live-run"]').count()
   assert.equal(liveRunCount, 0, 'direct reply should not create a live tool card')
   await textGrowth(page, '[data-testid="live-assistant"]')
+
+  await page.click('[data-testid="debug-drawer-toggle"]')
+  await page.click('[data-testid="control-modify"]')
+  const errorState = await page.textContent('[data-testid="workspace-state"]')
+  assert.match(errorState || '', /error/, 'modify state should expose the error state in the workbench')
+  await page.click('[data-testid="control-resume"]')
 }
 
 async function testToolReply(page) {
@@ -76,9 +83,17 @@ async function testToolReply(page) {
   const liveRunText = await page.locator('[data-testid="live-run"]').textContent()
   assert.match(liveRunText || '', /Task in progress/, 'tool path should show the live tool card first')
 
+  await page.click('[data-testid="debug-drawer-toggle"]')
+  await page.click('[data-testid="control-pause"]')
+  const pausedState = await page.textContent('[data-testid="workspace-state"]')
+  assert.match(pausedState || '', /paused/, 'pause control should expose paused state')
+  await page.click('[data-testid="control-resume"]')
+
   await page.waitForSelector('[data-testid="live-assistant"]', { timeout: 15000 })
   await textGrowth(page, '[data-testid="live-assistant"]')
   await page.waitForSelector('text=Task details', { timeout: 15000 })
+  const completedState = await page.textContent('[data-testid="workspace-state"]')
+  assert.match(completedState || '', /completed/, 'tool path should finish in completed state')
 }
 
 async function main() {

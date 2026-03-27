@@ -65,26 +65,30 @@ cd frontend && pnpm dev
 
 ## WebUI Demo
 
-现在默认用户入口是独立 `Vue + Vite` 的聊天式 Agent WebUI，而不只是 Swagger 或 `curl`。对外展示时，推荐使用 `llm` 模式启动。
+现在默认用户入口是独立 `Vue + Vite` 的诊断工作台，而不是普通聊天页。对外展示时，推荐使用 `llm` 模式启动。
 
 - 打开 `http://<机器IP>:8000/`
-- 左侧是会话列表和 `New chat`
-- 右侧是聊天消息流，输入框固定在底部
-- 点击 `Run File Demo` 或 `Run DB Demo`
-- 页面默认只展示用户消息和 Agent 最终回复
-- 任务执行中会先显示独立的工具卡片区；完成后，持久化后的执行细节仍折叠在 assistant 回复下方的 `Task details` 中
-- 报告正文默认放在 `Task details` 的 `Report preview` 中，避免和最终回复重复
-- 可以继续追问：
-  - `Show me the report again.`
-  - `Please summarize the report key points.`
-- 页面刷新后会优先恢复上一次活动会话
-- 最近任务的结果快照会持久化到 SQLite，服务重启后仍可查询
-- 顶部会显示当前 `Intent mode`：`fake` 或 `llm`
-- 普通聊天默认不调用工具；只有明确任务请求才进入计划和执行
-- 只有任务型请求会显示运行轨迹卡；普通聊天不再重复显示 run 摘要
-- WebUI 现在通过 `SSE` 流式接收 Agent 事件，不再等整包 JSON 返回后一次性刷新
-- 前端独立维护三类状态：已持久化消息、运行中的工具区、运行中的 assistant 文本
-- 明确任务请求会优先走本地 fast-path，提前显示 `Queued / Routing / Planning` 状态，减少长时间无反馈
+- 左侧是 Chat Panel：
+  - Project / 当前任务
+  - Input Query 摘要
+  - 聊天消息流
+  - 输入框与文件上传
+- 中间是 Workbench：
+  - `Flow Graph`
+  - `Current Step`
+  - `Task Log`
+  - `Fault Analysis Chart`
+  - `Diagnosis Summary`
+  - `Recommended Actions`
+  - `Report Preview`
+- 右侧是可折叠的 `Debug Drawer`
+- 底部是始终可见的 `Global Status Bar`
+- 聊天区只负责交流与轻量状态反馈，不再承担图表和报告正文展示
+- 任务执行中，Workbench 会先刷新过程区，再逐步补齐结果工件
+- `Debug Drawer` 默认收起，内部模块也支持单独折叠
+- 当前 `Execution Controls` 为 mock 交互，用于预留未来真实暂停/恢复/重跑接口
+- 组件职责与扩展位置见：
+  - [`frontend/README.md`](/root/projects/pr_agents/frontend/README.md)
 
 如果需要调试底层接口，再访问：
 
@@ -148,16 +152,24 @@ cd frontend && pnpm dev
 
 ## Frontend Testing
 
-浏览器级流式回归使用 Playwright：
+当前环境的默认前端验收是：
+
+```bash
+cd frontend
+pnpm build
+```
+
+如果本地环境具备浏览器运行条件，可选执行 Playwright 浏览器级回归：
 
 ```bash
 cd frontend
 pnpm exec playwright install chromium
-pnpm test:e2e
+pnpm test:browser:optional
 ```
 
-这些用例会直接验证：
+浏览器级可选用例会直接验证：
 
+- `empty / running / paused / error / completed` 页面状态
 - 普通聊天时 assistant 文本长度逐步增长
 - 工具型请求时先出现 `Task in progress`
 - 工具完成后 assistant 文本继续增长

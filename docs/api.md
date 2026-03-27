@@ -55,28 +55,25 @@
 
 ## Agent Demo
 
-当前用户主入口是根路径 `/` 的 Vue 聊天式 WebUI。
+当前用户主入口是根路径 `/` 的 Vue 诊断工作台。
 
-- 页面内可直接创建会话
-- 可一键运行两条官方示例：
-  - `Run File Demo`
-  - `Run DB Demo`
 - 页面由独立 `Vue + Vite` SPA 实现，FastAPI 负责托管构建产物
-- 会展示：
-  - 用户消息
-  - Agent 最终回复
-  - 运行中的独立工具卡片区
-  - 完成后的折叠 `Task details`
-- 页面刷新后会优先恢复最近活动 session
-- 页面顶部会显示当前 `Intent mode`
-- 普通聊天消息不会触发任务，也不会出现 tool_call
-- 任务型消息会在 session 响应中返回 `runs`，其中包含计划状态和步骤摘要
-- WebUI 不再等待整包消息执行完成，而是订阅 run 的 `SSE` 事件流
-- WebUI 默认不把 `plan`、`tool_call`、`tool_result` 直接渲染成主消息
-- 任务执行中会在消息流尾部显示独立工具卡片区；完成后该 run 会收敛到 assistant 回复下方的折叠详情里
-- 页面内还提供两类标准追问：
-  - `Show latest report`
-  - `Summarize report`
+- 页面结构：
+  - Chat Panel
+  - Workbench
+  - Debug Drawer
+  - Global Status Bar
+- `Workbench` 会同时展示：
+  - 流程图
+  - 当前步骤
+  - 任务日志
+  - 图表、摘要、建议、报告预览等工件
+- `Debug Drawer` 默认收起，并包含：
+  - Tool Calls
+  - Prompt Snapshot
+  - Memory State
+  - Execution Controls
+- `Execution Controls` 当前为 mock 控件，后续接真实暂停/恢复接口时可直接替换
 
 ## Model Mode 配置
 
@@ -152,5 +149,12 @@
 cd frontend
 pnpm install
 pnpm build
-pnpm test:e2e
+```
+
+如果本地环境具备浏览器运行条件，可选执行：
+
+```bash
+cd frontend
+pnpm exec playwright install chromium
+pnpm test:browser:optional
 ```

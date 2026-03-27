@@ -8,7 +8,7 @@
 
 ### WebUI
 
-负责用户输入、任务发起、结果展示、会话视图，不承载领域逻辑。当前通过 `Vue + Vite` 聊天式单页 WebUI 作为用户入口，FastAPI 托管构建产物，并通过 `SSE` 流式接收 Agent 运行事件。
+负责用户输入、任务发起、结果展示、会话视图，不承载领域逻辑。当前通过 `Vue + Vite` 的诊断工作台作为用户入口，FastAPI 托管构建产物，并通过 `SSE` 流式接收 Agent 运行事件。
 
 ### Agent Orchestration
 
@@ -61,11 +61,13 @@
 - 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 只使用注入后的模型，不在上层散布分支。
 - 单个 `PydanticAI Agent` 的决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
 - 前端发送消息时采用“POST 创建 run + GET SSE 订阅”模式，而不是等待整包 JSON 响应。
-- WebUI 展示层采用“两阶段展示”策略：运行中先显示独立工具卡片区；完成后再把持久化的 run 轨迹收敛到 assistant 回复下方的折叠详情。
+- WebUI 展示层采用“左侧交流、右侧工作、调试抽屉弱化、底部状态栏固定”的工作台策略。
 - 前端状态模型显式分为：
-  - 已持久化消息
-  - 运行中的 live run
-  - 运行中的 live assistant
+  - `workspaceState`
+  - `processState`
+  - `artifactState`
+  - `debugState`
+  - `statusBarState`
 - 当前流式协议分为两类：
   - 工具与步骤事件流：先展示 tool / step 卡片
   - assistant 文本流：通过 `assistant_delta` 增量输出最终回复，而不是等完整 session 再一次性刷新

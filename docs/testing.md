@@ -25,8 +25,10 @@
 - `assistant_started / assistant_delta / assistant_completed` 的增量回复示例
 - WebUI “运行中独立工具卡片区 + 完成后折叠 Task details” 展示示例
 - 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
-- Vue WebUI 浏览器级流式展示示例
-- Playwright 直接验证 `assistant_delta` 可见增长与 `Task in progress` 先出现示例
+- Vue WebUI 的浏览器级流式展示可选示例
+- Playwright 可选验证 `assistant_delta` 可见增长与 `Task in progress` 先出现示例
+- 诊断工作台 `empty / running / paused / error / completed` 页面状态示例
+- Debug Drawer 展开 / 收起与 mock execution controls 示例
 
 ## 运行
 
@@ -34,16 +36,25 @@
 uv run pytest
 ```
 
-浏览器级回归：
+当前环境默认执行：
+
+```bash
+uv run pytest
+cd frontend
+pnpm build
+```
+
+可选浏览器级回归：
 
 ```bash
 cd frontend
 pnpm exec playwright install chromium
-pnpm test:e2e
+pnpm test:browser:optional
 ```
 
 ## 测试策略
 
 - 通过 stub service 确保当前仓库无需 QT 代码即可完成最小闭环验证。
 - 后续接入 QT 真实实现后，应保留现有契约测试并新增适配器测试。
-- 浏览器级流式行为必须通过 Playwright 回归验证，不能只以 SSE 事件存在性代替真实用户可见效果。
+- 如果运行环境具备浏览器条件，建议通过 Playwright 做浏览器级流式回归；否则当前环境以 `pnpm build` + Python API/SSE 自动化测试作为基础保障。
+- 工作台布局、调试抽屉和 mock 执行控制也必须纳入前端回归，而不只测消息流。
