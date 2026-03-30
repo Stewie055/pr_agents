@@ -10,8 +10,12 @@ from pr_agents.application.tasks import TaskApplicationService
 from pr_agents.infrastructure import AgentSessionRepository
 from pr_agents.models import (
     AgentMessageStartResponse,
+    AgentRunControlAction,
+    AgentRunControlRequest,
+    AgentRunControlResponse,
     AgentSourceRecord,
     AgentSourceType,
+    AgentControlState,
     AgentRunStatus,
     AgentSessionResponse,
     AgentUserMessageRequest,
@@ -85,6 +89,118 @@ class AgentSessionService:
             run_id=run.run_id,
             message_id=message.message_id,
             stream_url=f"/api/v1/agent/sessions/{session_id}/runs/{run.run_id}/stream",
+        )
+
+    def control_run(
+        self,
+        session_id: str,
+        run_id: str,
+        request: AgentRunControlRequest,
+    ) -> AgentRunControlResponse:
+        run = self.session_repository.get_run(run_id)
+        if run is None or run.session_id != session_id:
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=False,
+                control_state=AgentControlState.RUNNING,
+                message="run not found",
+            )
+
+        current_state = AgentControlState(run.metadata.get("control_state", AgentControlState.RUNNING.value))
+
+        if request.action == AgentRunControlAction.PAUSE:
+            updated = self.session_repository.update_run(
+                run_id,
+                run.status,
+                summary=run.summary,
+                metadata={
+                    "control_state": AgentControlState.PAUSED.value,
+                    "control_note": request.note,
+                    "last_control_note": request.note,
+                },
+            )
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=True,
+                control_state=AgentControlState.PAUSED,
+                message="Run paused.",
+                run=updated,
+            )
+
+        if request.action == AgentRunControlAction.RESUME:
+            updated = self.session_repository.update_run(
+                run_id,
+                run.status,
+                summary=run.summary,
+                metadata={
+                    "control_state": AgentControlState.RUNNING.value,
+                    "control_note": request.note,
+                    "last_control_note": request.note,
+                },
+            )
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=True,
+                control_state=AgentControlState.RUNNING,
+                message="Run resumed.",
+                run=updated,
+            )
+
+        if request.action == AgentRunControlAction.MODIFY_STATE:
+            updated = self.session_repository.update_run(
+                run_id,
+                run.status,
+                summary=run.summary,
+                metadata={
+                    "control_state": current_state.value,
+                    "last_control_action": request.action.value,
+                    "last_control_note": request.note,
+                    "last_state_patch": request.state_patch,
+                },
+            )
+            return AgentRunControlResponse(
+                session_id=session_id,
+                run_id=run_id,
+                action=request.action,
+                applied=True,
+                control_state=AgentControlState(updated.metadata.get("control_state", current_state.value)),
+                message="Run state updated.",
+                run=updated,
+            )
+
+        rerun = self.session_repository.create_run(
+            session_id=session_id,
+            goal=run.goal,
+            intent_mode=run.intent_mode,
+            metadata={
+                "request_content": run.metadata.get("request_content", run.goal),
+                "source_id": self._ensure_rerun_source_id(
+                    session_id,
+                    run.goal,
+                    run.metadata.get("source_id"),
+                ),
+                "rerun_source_run_id": run_id,
+                "rerun_source_step_id": request.step_id,
+                "rerun_note": request.note,
+                "state": "queued",
+            },
+        )
+        return AgentRunControlResponse(
+            session_id=session_id,
+            run_id=run_id,
+            action=request.action,
+            applied=True,
+            control_state=current_state,
+            message="Rerun started.",
+            run=run,
+            spawned_run_id=rerun.run_id,
+            stream_url=f"/api/v1/agent/sessions/{session_id}/runs/{rerun.run_id}/stream",
         )
 
     async def stream_run_events(self, session_id: str, run_id: str):
@@ -164,6 +280,12 @@ class AgentSessionService:
                 metadata={"demo_code": demo_code, "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"}},
             )
         raise ValueError(f"unknown demo code: {demo_code}")
+
+    def _ensure_rerun_source_id(self, session_id: str, run_goal: str, source_id: str | None) -> str | None:
+        if source_id:
+            return source_id
+        demo_code = "a_demo_db" if ("database" in run_goal.lower() or "数据库" in run_goal) else "a_demo_file"
+        return self.register_demo_source(session_id, demo_code).source_id
 
     @staticmethod
     def _format_event(event) -> str:
