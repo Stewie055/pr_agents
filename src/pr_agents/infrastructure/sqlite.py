@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pr_agents.models import (
+    AgentControlState,
     AgentMessage,
     AgentPlanStep,
     AgentRun,
@@ -508,6 +509,37 @@ class AgentSessionRepository(SQLiteRepository):
                 (run_id,),
             ).fetchall()
         return self._run_from_row(row, [self._step_from_row(step) for step in steps])
+
+    def merge_run_metadata(self, run_id: str, metadata: dict) -> AgentRun | None:
+        with self._connect() as conn:
+            current = conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+            if current is None:
+                return None
+            merged_metadata = json.loads(current["metadata"])
+            merged_metadata.update(metadata)
+            now = utc_now()
+            conn.execute(
+                """
+                UPDATE agent_runs
+                SET metadata = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (json.dumps(merged_metadata), now, run_id),
+            )
+            row = conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+            steps = conn.execute(
+                "SELECT * FROM agent_run_steps WHERE run_id = ? ORDER BY step_index ASC",
+                (run_id,),
+            ).fetchall()
+        return self._run_from_row(row, [self._step_from_row(step) for step in steps])
+
+    def set_run_control_state(self, run_id: str, control_state: AgentControlState, note: str = "") -> AgentRun | None:
+        metadata = {
+            "control_state": control_state.value,
+            "control_note": note,
+            "control_updated_at": utc_now(),
+        }
+        return self.merge_run_metadata(run_id, metadata)
 
     def create_run_step(
         self,

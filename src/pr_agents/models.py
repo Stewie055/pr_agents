@@ -45,6 +45,11 @@ class AgentStepStatus(str, Enum):
     FAILED = "failed"
 
 
+class AgentControlState(str, Enum):
+    RUNNING = "running"
+    PAUSED = "paused"
+
+
 class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -382,6 +387,32 @@ class AgentMessageStartResponse(BaseModel):
     run_id: str
     message_id: str
     stream_url: str
+
+
+class AgentRunControlAction(str, Enum):
+    PAUSE = "pause"
+    RESUME = "resume"
+    RERUN_STEP = "rerun_step"
+    MODIFY_STATE = "modify_state"
+
+
+class AgentRunControlRequest(BaseModel):
+    action: AgentRunControlAction
+    step_id: str | None = None
+    note: str = ""
+    state_patch: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunControlResponse(BaseModel):
+    session_id: str
+    run_id: str
+    action: AgentRunControlAction
+    applied: bool
+    control_state: AgentControlState
+    message: str
+    run: AgentRun | None = None
+    spawned_run_id: str | None = None
+    stream_url: str | None = None
 
 
 class AgentStreamEvent(BaseModel):
