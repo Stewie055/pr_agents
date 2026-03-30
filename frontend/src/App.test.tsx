@@ -19,6 +19,7 @@ vi.mock('./hooks/useAgentWorkspace', () => ({
     chartUrl: null,
     promptSnapshot: {},
     memorySnapshot: {},
+    runMetadata: {},
     onPromptChange: vi.fn(),
     onQuickPrompt: vi.fn(),
     onSend: vi.fn(),

@@ -22,14 +22,20 @@ class ContextManager:
         self.task_service = task_service
         self.memory_manager = memory_manager
 
-    def build_context(self, session_id: str, user_message: str) -> AgentContext:
+    def build_context(self, session_id: str, user_message: str, source_id: str | None = None) -> AgentContext:
         messages = self.session_repository.list_messages(session_id)
         tasks = self.task_service.list_session_tasks(session_id)
+        sources = self.session_repository.list_sources(session_id)
         memory = self.memory_manager.snapshot(session_id)
         latest_report_text = ""
         latest_report_summary = memory.mid_term.latest_report_summary
         latest_report_artifact_id = memory.mid_term.latest_report_artifact_id
         recent_artifacts: list[dict] = []
+        selected_source = None
+        if source_id:
+            selected_source = next((source for source in sources if source.source_id == source_id), None)
+        if selected_source is None and sources:
+            selected_source = sources[-1]
 
         if tasks:
             latest_task = tasks[-1]
@@ -71,6 +77,8 @@ class ContextManager:
                 for task in tasks[-3:]
             ],
             recent_artifacts=recent_artifacts,
+            latest_source=selected_source.model_dump(mode="json") if selected_source else None,
+            available_sources=[source.model_dump(mode="json") for source in sources],
             latest_report_text=latest_report_text,
             latest_report_summary=latest_report_summary,
             latest_report_artifact_id=latest_report_artifact_id,

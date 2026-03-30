@@ -57,7 +57,16 @@ export function Workbench({
                 <dt>Intent Mode</dt>
                 <dd>{run.intent_mode}</dd>
               </div>
+              <div>
+                <dt>Model Used</dt>
+                <dd>{String(run.metadata.model_mode_used || run.intent_mode)}</dd>
+              </div>
             </dl>
+            {run.metadata.used_fallback ? (
+              <p className="muted-copy">
+                Primary model failed and the run fell back to fake mode.
+              </p>
+            ) : null}
           </section>
 
           <section className="workbench-card" data-testid="step-timeline">

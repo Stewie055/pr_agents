@@ -12,6 +12,8 @@ from pr_agents.models import (
     AgentPlanStep,
     AgentRun,
     AgentRunStatus,
+    AgentSourceRecord,
+    AgentSourceType,
     AgentStepStatus,
     ArtifactRecord,
     ArtifactType,
@@ -81,6 +83,17 @@ class SQLiteRepository:
                     role TEXT NOT NULL,
                     message_type TEXT NOT NULL,
                     content TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_sources (
+                    source_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(session_id) REFERENCES sessions(session_id)
@@ -369,6 +382,61 @@ class AgentSessionRepository(SQLiteRepository):
             ).fetchall()
         return [self._message_from_row(row) for row in rows]
 
+    def register_source(
+        self,
+        session_id: str,
+        source_type: AgentSourceType,
+        name: str,
+        payload: dict,
+        metadata: dict | None = None,
+    ) -> AgentSourceRecord:
+        self.create_session(session_id)
+        now = utc_now()
+        source_id = f"src-{uuid4().hex[:8]}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_sources(source_id, session_id, source_type, name, payload, metadata, created_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    session_id,
+                    source_type.value,
+                    name,
+                    json.dumps(payload),
+                    json.dumps(metadata or {}),
+                    now,
+                ),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                (now, session_id),
+            )
+            row = conn.execute("SELECT * FROM agent_sources WHERE source_id = ?", (source_id,)).fetchone()
+        return self._source_from_row(row)
+
+    def get_source(self, source_id: str) -> AgentSourceRecord | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM agent_sources WHERE source_id = ?", (source_id,)).fetchone()
+        return self._source_from_row(row) if row else None
+
+    def get_session_source(self, session_id: str, source_id: str) -> AgentSourceRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_sources WHERE session_id = ? AND source_id = ?",
+                (session_id, source_id),
+            ).fetchone()
+        return self._source_from_row(row) if row else None
+
+    def list_sources(self, session_id: str) -> list[AgentSourceRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_sources WHERE session_id = ? ORDER BY created_at ASC",
+                (session_id,),
+            ).fetchall()
+        return [self._source_from_row(row) for row in rows]
+
     def create_run(
         self,
         session_id: str,
@@ -551,6 +619,18 @@ class AgentSessionRepository(SQLiteRepository):
             role=MessageRole(row["role"]),
             message_type=MessageType(row["message_type"]),
             content=row["content"],
+            metadata=json.loads(row["metadata"]),
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _source_from_row(row: sqlite3.Row) -> AgentSourceRecord:
+        return AgentSourceRecord(
+            source_id=row["source_id"],
+            session_id=row["session_id"],
+            source_type=AgentSourceType(row["source_type"]),
+            name=row["name"],
+            payload=json.loads(row["payload"]),
             metadata=json.loads(row["metadata"]),
             created_at=row["created_at"],
         )

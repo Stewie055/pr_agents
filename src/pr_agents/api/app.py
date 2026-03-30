@@ -11,6 +11,8 @@ from pr_agents.models import (
     AgentUserMessageRequest,
     DatabaseAnalysisRequest,
     FileAnalysisRequest,
+    RegisterDatabaseSourceRequest,
+    RegisterFileSourceRequest,
     SessionTasksResponse,
 )
 
@@ -97,6 +99,25 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
     @app.post("/api/v1/agent/sessions/{session_id}/messages")
     def send_agent_message(session_id: str, request: AgentUserMessageRequest):
         return agent_session_service.start_message_run(session_id, request)
+
+    @app.post("/api/v1/agent/sessions/{session_id}/sources/file")
+    def register_agent_file_source(session_id: str, request: RegisterFileSourceRequest):
+        return agent_session_service.register_file_source(session_id, request)
+
+    @app.post("/api/v1/agent/sessions/{session_id}/sources/database")
+    def register_agent_database_source(session_id: str, request: RegisterDatabaseSourceRequest):
+        return agent_session_service.register_database_source(session_id, request)
+
+    @app.get("/api/v1/agent/sessions/{session_id}/sources")
+    def list_agent_sources(session_id: str):
+        return agent_session_service.list_sources(session_id)
+
+    @app.post("/api/v1/agent/sessions/{session_id}/demo-sources/{demo_code}")
+    def register_demo_source(session_id: str, demo_code: str):
+        try:
+            return agent_session_service.register_demo_source(session_id, demo_code)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/agent/sessions/{session_id}/runs/{run_id}/stream")
     def stream_agent_run(session_id: str, run_id: str):

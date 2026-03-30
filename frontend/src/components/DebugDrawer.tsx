@@ -3,6 +3,7 @@ interface DebugDrawerProps {
   onToggle: () => void
   promptSnapshot: unknown
   memorySnapshot: unknown
+  runMetadata: unknown
   toolCalls: unknown
 }
 
@@ -15,6 +16,7 @@ export function DebugDrawer({
   onToggle,
   promptSnapshot,
   memorySnapshot,
+  runMetadata,
   toolCalls,
 }: DebugDrawerProps) {
   return (
@@ -44,6 +46,10 @@ export function DebugDrawer({
         <section className="debug-card">
           <h3>Memory Snapshot</h3>
           <pre>{pretty(memorySnapshot)}</pre>
+        </section>
+        <section className="debug-card">
+          <h3>Run Metadata</h3>
+          <pre>{pretty(runMetadata)}</pre>
         </section>
       </aside>
     </>

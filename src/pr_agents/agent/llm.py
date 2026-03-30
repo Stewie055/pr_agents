@@ -241,10 +241,15 @@ class GLMProvider:
         )
 
 
-def build_agent_model(settings: Settings):
+def build_agent_models(settings: Settings):
     fake = FakeLLM()
     if settings.intent_mode == IntentMode.LLM:
         provider = GLMProvider(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
         if provider.is_configured():
-            return provider.build_model(settings.llm_model), IntentMode.LLM.value
-    return fake.build_model(), IntentMode.FAKE.value
+            return provider.build_model(settings.llm_model), fake.build_model(), IntentMode.LLM.value
+    return fake.build_model(), None, IntentMode.FAKE.value
+
+
+def build_agent_model(settings: Settings):
+    model, _fallback_model, mode = build_agent_models(settings)
+    return model, mode

@@ -2,6 +2,7 @@ export type TaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 export type AgentRunStatus = 'planned' | 'running' | 'succeeded' | 'failed'
 export type AgentStepStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 export type MessageRole = 'user' | 'assistant' | 'tool'
+export type AgentSourceType = 'file' | 'database'
 
 export interface ArtifactRef {
   artifact_id: string
@@ -127,11 +128,22 @@ export interface AgentRun {
   updated_at: string
 }
 
+export interface AgentSourceRecord {
+  source_id: string
+  session_id: string
+  source_type: AgentSourceType
+  name: string
+  payload: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 export interface AgentSessionResponse {
   session_id: string
   messages: AgentMessage[]
   tasks: TaskRecord[]
   runs: AgentRun[]
+  sources: AgentSourceRecord[]
 }
 
 export interface AgentMessageStartResponse {
@@ -157,4 +169,5 @@ export interface LiveAssistant {
 export interface QuickPrompt {
   label: string
   prompt: string
+  demoCode?: string
 }

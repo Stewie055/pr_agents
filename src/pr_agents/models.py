@@ -85,6 +85,11 @@ class LLMProviderName(str, Enum):
     GLM = "glm"
 
 
+class AgentSourceType(str, Enum):
+    FILE = "file"
+    DATABASE = "database"
+
+
 class TaskContext(BaseModel):
     session_id: str = Field(default_factory=lambda: f"session-{uuid4().hex[:8]}")
     task_id: str = Field(default_factory=lambda: f"task-{uuid4().hex[:8]}")
@@ -333,11 +338,22 @@ class AgentRun(BaseModel):
     updated_at: str
 
 
+class AgentSourceRecord(BaseModel):
+    source_id: str
+    session_id: str
+    source_type: AgentSourceType
+    name: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
 class AgentSessionResponse(BaseModel):
     session_id: str
     messages: list[AgentMessage] = Field(default_factory=list)
     tasks: list[TaskRecord] = Field(default_factory=list)
     runs: list[AgentRun] = Field(default_factory=list)
+    sources: list[AgentSourceRecord] = Field(default_factory=list)
 
 
 class CreateAgentSessionResponse(BaseModel):
@@ -346,6 +362,19 @@ class CreateAgentSessionResponse(BaseModel):
 
 class AgentUserMessageRequest(BaseModel):
     content: str
+    source_id: str | None = None
+
+
+class RegisterFileSourceRequest(BaseModel):
+    file_name: str
+    content: str
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegisterDatabaseSourceRequest(BaseModel):
+    query_name: str
+    sql: str
+    source_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentMessageStartResponse(BaseModel):
@@ -386,6 +415,8 @@ class AgentContext(BaseModel):
     conversation_window: list[dict[str, Any]] = Field(default_factory=list)
     recent_tasks: list[dict[str, Any]] = Field(default_factory=list)
     recent_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    latest_source: dict[str, Any] | None = None
+    available_sources: list[dict[str, Any]] = Field(default_factory=list)
     latest_report_text: str = ""
     latest_report_summary: str = ""
     latest_report_artifact_id: str | None = None

@@ -8,62 +8,52 @@
 
 ### WebUI
 
-负责用户输入、任务发起、结果展示、会话视图，不承载领域逻辑。当前通过独立 `React + Vite + TypeScript` 工作台作为用户入口，生产模式由 FastAPI 托管构建产物，开发模式由 Vite dev server 代理 `/api` 到 FastAPI。
+正式入口是独立 `React + Vite + TypeScript` 工作台。前端负责会话交互、SSE 消费、Workbench 展示和 Debug Drawer，不承载领域逻辑。
 
 ### Agent Orchestration
 
-负责管理 session、上下文、记忆、执行和事件流。当前 Agent 运行时以单一 `AgentRuntime` 为主入口，内部由以下模块组成：
+第一阶段采用单一 `ReAct` 模式，不引入 Planner。
+
+当前由以下模块组成：
 
 - `AgentRuntime`
-  统一承接用户消息、上下文装配、单个 `PydanticAI Agent` 的决策与工具调用、SSE 事件和 SQLite 持久化
+  单个 `PydanticAI Agent`，负责直接回复或调用 workflow-level tools
 - `ContextManager`
-  从 session、message、task、artifact 和 memory 组装 `AgentContext`
-- `Memory`
-  当前实现短期与中期记忆；长期知识与 RAG 作为后续扩展位，归属于 Memory
-- `Agent Tools`
-  仅向模型暴露 workflow-level tools：文件分析、数据库分析、加载最近报告、概括最近报告
+  组装消息窗口、最近任务、最近报告和当前会话 source
+- `MemoryManager`
+  当前实现短期和中期记忆
 - `Event Stream`
-  将 run 生命周期、步骤状态和关键 tool 结果通过 SSE 推给前端
+  推送 `run_started / tool_called / tool_result / assistant_* / run_* / session_snapshot`
 
 ### Tool
 
-向 Agent 暴露粗粒度、业务友好的调用入口，负责参数校验和调用 Workflow。
+只向 Agent 暴露 workflow-level tools：
+
+- 文件分析
+- 数据库分析
+- 加载最近报告
+- 概括最近报告
 
 ### Workflow
 
-负责把多个 Service 步骤可靠串联，维护产物传递、失败终止和结构化结果。
+负责把多个 `Service` 步骤可靠串联，维护产物传递、失败终止和结构化结果。
 
 ### Service
 
-负责领域业务能力抽象，是人工接入 QT 能力的唯一入口。当前接口采用 `business_code` 驱动的通用模式，由具体实现决定业务属于 A 类还是 B 类。
+负责领域业务能力抽象。当前仍由 `StubAnalysisPlatform` 提供可运行假实现，后续替换为 QT 适配实现。
 
 ### Infrastructure
 
-负责任务目录、产物保存、文件引用和底层存储适配。当前已包含本地 artifact 落盘和 SQLite 元数据存储。
+当前包含：
+
+- SQLite：session、task、run、run step、source、artifact 持久化
+- 本地 artifact 落盘
 
 ## 当前实现原则
 
-- 所有接口统一使用 Pydantic 模型。
-- Workflow 负责可靠流程，Service 负责领域能力。
-- Tool 不直接耦合 QT 实现。
-- 当前使用 stub 实现跑通闭环，后续替换为真实适配器。
-- 任务执行采用同步模式，但统一使用 `task_id` 和状态机模型，便于后续扩展异步执行。
-- A 类“单业务单文件”和 B 类“多业务共享文件”不拆成两套 API，只通过 `business_code` 和 `source_profile` 区分。
-- 普通图表和 matplotlib 科学绘图统一建模为 `ChartArtifact`。
-- 用户 Demo 路径采用聊天式 Agent 会话：用户消息 -> Agent 计划 -> Tool 调用 -> 任务结果 -> 报告内容。
-- 官方 demo 当前包含两条主线：文件入口分析和数据库入口分析；两者共享同一套 Router / Planner / Executor / Workflow 链路。
-- 当前 Agent 会话层已将任务结果快照持久化到 SQLite 以支持重启恢复。
-- 当前模型层支持双模：
-  - `fake`：规则式稳定模式，由 `FakeLLM` 提供
-  - `llm`：通过 `GLMProvider` 调用真实模型，失败自动回退到 `fake`
-- GLM 官方 API 的 HTTP 调用被隔离在独立 provider 中，`AgentSessionService` 和 `AgentRuntime` 不直接依赖供应商细节。
-- 默认模型配置为 `GLM-4.5-Air`，便于开发环境先验证自然语言理解；后续迁移到局域网环境时可只替换 provider 配置或实现。
-- 工厂在启动时负责注入 fake 或真实 llm；AgentRuntime 只使用注入后的模型，不在上层散布分支。
-- 单个 `PydanticAI Agent` 的决策决定是直接回复，还是调用 `load_latest_report`、`summarize_report`、`run_file_analysis_workflow`、`run_db_analysis_workflow` 等白名单 tools。
-- 前端采用“POST 创建 run + GET SSE 订阅”模式，而不是等待整包 JSON 响应。
-- WebUI 信息架构当前固定为：
-  - 左侧 `Chat Panel`
-  - 右侧 `Workbench`
-  - 右侧默认收起的 `Debug Drawer`
-- 图表产物通过 `raw artifact` 接口直接渲染，当前 stub 输出 `SVG`。
-- `AgentRun.metadata` 当前持久化 `prompt_snapshot` 和 `memory_snapshot`，供调试抽屉读取。
+- `TaskApplicationService` 只负责任务状态、结果和产物持久化
+- 具体执行由 `AnalysisExecutionService` 调用 `WorkflowToolRegistry`
+- Agent 分析能力必须建立在会话级 source 上，不允许 runtime 内置 demo 文件或固定 SQL
+- demo 通过显式 `demo source` helper API 注入
+- `llm` 模式模型失败时，在同一 run 内回退到 `fake`
+- 长期记忆、RAG、Planner 保留为后续扩展位，不在第一阶段实现

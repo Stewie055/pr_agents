@@ -34,6 +34,7 @@ export default function App() {
         onToggle={workspace.toggleDebug}
         promptSnapshot={workspace.promptSnapshot}
         memorySnapshot={workspace.memorySnapshot}
+        runMetadata={workspace.runMetadata}
         toolCalls={workspace.toolSteps}
       />
     </div>

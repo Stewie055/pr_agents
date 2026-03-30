@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from pr_agents.application import TaskApplicationService
-from pr_agents.agent import AgentDependencies, AnalysisOrchestrator
+from pr_agents.application import AnalysisExecutionService, TaskApplicationService
 from pr_agents.infrastructure import ArtifactRepository, ArtifactStore, TaskRepository
 from pr_agents.models import FileAnalysisRequest
 from pr_agents.services import StubAnalysisPlatform
@@ -17,10 +16,9 @@ def build_task_service(tmp_path: Path) -> TaskApplicationService:
         database_workflow=DatabaseAnalysisWorkflow(platform),
         report_workflow=ReportFromExistingArtifactsWorkflow(platform),
     )
-    orchestrator = AnalysisOrchestrator(AgentDependencies(tools=tools))
     db_path = str(tmp_path / "artifacts" / "app.db")
     return TaskApplicationService(
-        orchestrator=orchestrator,
+        execution_service=AnalysisExecutionService(tools),
         task_repository=TaskRepository(db_path),
         artifact_repository=ArtifactRepository(db_path),
     )
@@ -46,13 +44,13 @@ def test_task_service_persists_task_and_artifacts(tmp_path: Path) -> None:
 
 
 def test_task_service_marks_failures(tmp_path: Path) -> None:
-    class FailingOrchestrator:
-        def route_task(self, task, context=None):
+    class FailingExecutionService:
+        def run_file_analysis(self, context, request):
             raise RuntimeError("boom")
 
     db_path = str(tmp_path / "artifacts" / "app.db")
     service = TaskApplicationService(
-        orchestrator=FailingOrchestrator(),
+        execution_service=FailingExecutionService(),
         task_repository=TaskRepository(db_path),
         artifact_repository=ArtifactRepository(db_path),
     )

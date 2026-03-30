@@ -40,7 +40,7 @@ test('renders messages and submits prompt from textarea', async () => {
       statusText="Ready."
       prompt="Hello"
       busy={false}
-      quickPrompts={[{ label: 'Run File Demo', prompt: 'demo' }]}
+      quickPrompts={[{ label: 'Run File Demo', prompt: 'demo', demoCode: 'a_demo_file' }]}
       onPromptChange={() => undefined}
       onSend={onSend}
       onQuickPrompt={() => undefined}

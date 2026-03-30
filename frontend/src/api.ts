@@ -1,5 +1,6 @@
 import type {
   AgentMessageStartResponse,
+  AgentSourceRecord,
   AgentSessionResponse,
   TaskDetailResponse,
 } from './types'
@@ -22,12 +23,24 @@ export async function getSession(sessionId: string): Promise<AgentSessionRespons
 export async function sendMessage(
   sessionId: string,
   content: string,
+  sourceId?: string | null,
 ): Promise<AgentMessageStartResponse> {
   return readJson(
     await fetch(`/api/v1/agent/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, source_id: sourceId || undefined }),
+    }),
+  )
+}
+
+export async function registerDemoSource(
+  sessionId: string,
+  demoCode: string,
+): Promise<AgentSourceRecord> {
+  return readJson(
+    await fetch(`/api/v1/agent/sessions/${sessionId}/demo-sources/${demoCode}`, {
+      method: 'POST',
     }),
   )
 }

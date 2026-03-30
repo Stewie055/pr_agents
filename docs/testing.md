@@ -2,32 +2,18 @@
 
 当前自动化测试覆盖：
 
-- 模型和 Service 接口契约
+- Service 接口契约与 stub 行为
 - Workflow 编排
 - Tool 调用
-- Agent Orchestration 路由
-- WebUI 工作台闭环
+- `AnalysisExecutionService` 与 `TaskApplicationService` 执行链路
 - API 提交、查询、artifact 读取
 - SQLite 持久化与失败状态流转
-- A 类单业务单文件和 B 类共享文件示例
-- `scientific_plot` 图表产物示例
-- 官方 `A_DEMO` demo 闭环示例
-- Agent 会话 API、多轮追问和 WebUI 首页示例
-- 诊断工作台布局：左侧聊天区、中间 Notebook 式 Workbench、右侧 Debug Drawer
-- 服务重启后的任务结果恢复示例
-- `FakeLLM` 与 `GLMProvider` 示例
-- fake / llm 双模切换与 fallback 示例
-- GLM provider 请求构造与 provider 未配置 fallback 示例
-- 普通聊天不触发工具的 session 示例
-- 单个 `PydanticAI Agent` 的 workflow-level 工具决策和 run/step 轨迹示例
-- `MemoryManager` 的最近任务与最近报告摘要示例
-- SSE run 启动、事件流顺序和 session 最终一致性示例
-- `assistant_started / assistant_delta / assistant_completed` 的增量回复示例
-- 双主线 demo：文件分析、数据库分析，以及报告摘要追问示例
-- 前端 React 组件渲染与布局示例
-- 根路径 `/` 托管构建后的前端首页示例
-- chart artifact `raw` 接口返回 SVG 示例
-- run metadata 中的 `prompt_snapshot / memory_snapshot` 示例
+- session source 注册、查询与 demo source 注入
+- `ReAct` 单 Agent 的 workflow-level 工具决策
+- 无 source 引导、多轮追问、报告重看与报告摘要
+- `llm` 运行时模型失败回退到 `fake`
+- SSE 事件流与 session 最终一致性
+- React 组件渲染与前端构建
 
 ## 运行
 
@@ -37,8 +23,14 @@ cd frontend && pnpm test
 cd frontend && pnpm build
 ```
 
-## 测试策略
+## 当前门槛
 
-- 通过 stub service 确保当前仓库无需 QT 代码即可完成最小闭环验证。
-- 后续接入 QT 真实实现后，应保留现有契约测试并新增适配器测试。
-- 当前环境默认依赖 `uv run pytest + frontend/pnpm test + frontend/pnpm build` 作为交付门槛。
+- 后端测试必须通过
+- 前端测试必须通过
+- 前端生产构建必须通过
+
+## 策略
+
+- 当前仍通过 stub service 保证仓库在无 QT 代码时可回归
+- 后续接入 QT 真实实现后，应保留现有契约测试并新增适配器测试
+- 长期记忆、RAG、Planner 相关测试不在第一阶段范围内

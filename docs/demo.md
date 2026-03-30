@@ -1,21 +1,22 @@
 # Demo 说明
 
-当前仓库提供两条适合外部展示的官方 Agent demo。推荐在 `llm` 模式下演示，`fake` 作为开发回退模式保留。
+当前仓库提供两条适合外部展示的官方 Agent demo。第一阶段正式采用 `ReAct` 单 Agent 模式，demo 通过显式 `demo source` 进入系统。
 
 两条主线分别是：
 
-- 文件主线：`A_DEMO` 文件数据 -> 科学绘图 -> 报告
-- 数据库主线：清洗后数据库数据 -> 科学绘图 -> 报告
+- 文件主线：注册 `a_demo_file` -> 科学绘图 -> 报告
+- 数据库主线：注册 `a_demo_db` -> 科学绘图 -> 报告
 
 ## 1. 安装依赖
 
 ```bash
 uv sync --python 3.11
+cd frontend && pnpm install
 ```
 
-## 2. 以 llm 模式启动服务
+## 2. 启动服务
 
-设置环境变量后启动：
+`llm` 模式：
 
 ```bash
 export PR_AGENTS_INTENT_MODE=llm
@@ -26,7 +27,7 @@ export PR_AGENTS_LLM_API_KEY="<your-api-key>"
 uv run python -c "from pr_agents.bootstrap import build_api_app; import uvicorn; uvicorn.run(build_api_app(), host='0.0.0.0', port=8000)"
 ```
 
-如果当前只是联调业务 `Service`，可改为：
+开发与回归场景可切到：
 
 ```bash
 export PR_AGENTS_INTENT_MODE=fake
@@ -34,107 +35,51 @@ export PR_AGENTS_INTENT_MODE=fake
 
 ## 3. 打开 WebUI
 
-浏览器访问：
+- `http://<机器IP>:8000/`
+- `http://<机器IP>:5173/`
+- `http://<机器IP>:8000/docs`
 
-```text
-http://<机器IP>:8000/
-```
+## 4. 文件 demo
 
-前端开发模式：
+前端操作：
 
-```text
-http://<机器IP>:5173/
-```
+1. 点击 `Run File Demo`
+2. 前端先注册 `a_demo_file`
+3. 再发送标准 prompt
+4. 观察 `Workbench` 中的 Run Overview、Tool Timeline、Metrics、Chart、Report
 
-调试底层接口时再访问：
-
-```text
-http://<机器IP>:8000/docs
-```
-
-页面结构：
-
-- 左侧 `Chat Panel`
-- 右侧 `Workbench`
-- 右侧 `Debug Drawer`
-
-## 4. 主线一：文件 demo
-
-推荐操作：
-
-1. 在聊天区点击 `Run File Demo`
-2. 观察右侧 `Workbench` 依次刷新：
-   - `Run Overview`
-   - `Tool Timeline`
-   - `Metrics Table`
-   - `Chart Preview`
-   - `Report Preview`
-3. 需要排查上下文时打开 `Debug Drawer`
-
-等价 API 调用如下：
+等价 API：
 
 ```bash
-curl -s http://127.0.0.1:8000/api/v1/tasks/file-analysis \
+SESSION_ID=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agent/sessions | jq -r '.session_id')
+SOURCE_ID=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agent/sessions/$SESSION_ID/demo-sources/a_demo_file | jq -r '.source_id')
+curl -s http://127.0.0.1:8000/api/v1/agent/sessions/$SESSION_ID/messages \
   -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{
-  "business_code": "A_DEMO",
-  "objective": "Generate a scientific plot report for the demo dataset",
-  "file_name": "demo_a.csv",
-  "content": "temperature,pressure\n21.5,101.2\n22.1,101.5\n22.8,101.7\n",
-  "source_profile": {
-    "source_pattern": "per_business_file",
-    "data_version": "demo-v1"
-  },
-  "chart_profile": {
-    "chart_type": "scientific_plot"
-  },
-  "report_profile": {
-    "template": "demo-template"
-  }
-}
-JSON
+  -d "{\"content\":\"Please use A_DEMO file data to generate a scientific plot and report.\",\"source_id\":\"$SOURCE_ID\"}"
 ```
 
-## 5. 主线二：数据库 demo
+## 5. 数据库 demo
 
-推荐操作：
+前端操作：
 
-1. 在聊天区点击 `Run DB Demo`
-2. 观察 `Workbench` 以相同结构刷新
-3. 如需查看 prompt 和 memory，打开 `Debug Drawer`
+1. 点击 `Run DB Demo`
+2. 前端先注册 `a_demo_db`
+3. 再发送标准 prompt
 
-等价 API 调用如下：
+等价 API：
 
 ```bash
-curl -s http://127.0.0.1:8000/api/v1/tasks/db-analysis \
+SESSION_ID=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agent/sessions | jq -r '.session_id')
+SOURCE_ID=$(curl -s -X POST http://127.0.0.1:8000/api/v1/agent/sessions/$SESSION_ID/demo-sources/a_demo_db | jq -r '.source_id')
+curl -s http://127.0.0.1:8000/api/v1/agent/sessions/$SESSION_ID/messages \
   -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{
-  "business_code": "A_DEMO",
-  "objective": "Generate a scientific plot report from database data",
-  "query_name": "demo_query",
-  "sql": "select * from cleaned_demo_data",
-  "source_profile": {
-    "source_pattern": "per_business_file",
-    "data_version": "demo-v1"
-  },
-  "chart_profile": {
-    "chart_type": "scientific_plot"
-  },
-  "report_profile": {
-    "template": "demo-template"
-  }
-}
-JSON
+  -d "{\"content\":\"Please use database data to generate a scientific plot and report for A_DEMO.\",\"source_id\":\"$SOURCE_ID\"}"
 ```
 
 ## 6. 多轮追问
 
-如果要演示 Agent 会话能力，可以先创建 session，再发送标准 prompt：
+在同一 session 下继续发送：
 
-- `Please use A_DEMO file data to generate a scientific plot and report.`
-- `Please use database data to generate a scientific plot and report for A_DEMO.`
 - `Show me the report again.`
 - `Please summarize the report key points.`
 
@@ -142,9 +87,9 @@ JSON
 
 ## 7. 排查
 
+- 分析请求没有执行
+  先确认当前 session 是否已注册匹配 source。
+- llm 模式失败
+  当前会在同一 run 内回退到 `fake`，`Debug Drawer` 和 run metadata 可见 `used_fallback`。
 - 根路径没有交互界面
-  先确认是否执行了 `cd frontend && pnpm build`，以及 FastAPI 是否读取到 `frontend/dist`。
-- llm 模式响应慢
-  当前会先看到聊天区轻量状态，再在 `Workbench` 中逐步刷新运行产物。
-- 模型不可用
-  可切换到 `fake` 模式，先保证 demo 和业务适配流程跑通。
+  先确认是否执行了 `cd frontend && pnpm build`。

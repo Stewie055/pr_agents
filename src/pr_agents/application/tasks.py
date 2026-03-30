@@ -4,8 +4,6 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
-from pr_agents.agent import AnalysisOrchestrator
-from pr_agents.agent.orchestrator import UserTask
 from pr_agents.infrastructure import ArtifactRepository, TaskRepository
 from pr_agents.models import (
     ArtifactRecord,
@@ -20,16 +18,17 @@ from pr_agents.models import (
     WorkflowError,
     WorkflowResult,
 )
+from .execution import AnalysisExecutionService
 
 
 class TaskApplicationService:
     def __init__(
         self,
-        orchestrator: AnalysisOrchestrator,
+        execution_service: AnalysisExecutionService,
         task_repository: TaskRepository,
         artifact_repository: ArtifactRepository,
     ) -> None:
-        self.orchestrator = orchestrator
+        self.execution_service = execution_service
         self.task_repository = task_repository
         self.artifact_repository = artifact_repository
         self._results: dict[str, WorkflowResult] = {}
@@ -49,22 +48,7 @@ class TaskApplicationService:
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
-            result = self.orchestrator.route_task(
-                UserTask(
-                    route="file_analysis",
-                    business_code=request.business_code,
-                    objective=request.objective,
-                    file_name=request.file_name,
-                    content=request.content,
-                    operations=request.operations,
-                    source_profile=request.source_profile,
-                    clean_profile=request.clean_profile,
-                    analysis_profile=request.analysis_profile,
-                    chart_profile=request.chart_profile,
-                    report_profile=request.report_profile,
-                ),
-                context=context,
-            )
+            result = self.execution_service.run_file_analysis(context, request)
             return self._finalize_task(context.task_id, context.session_id, result)
         except Exception as exc:
             error = WorkflowError(code="task_execution_failed", message=str(exc), step="application_service")
@@ -95,22 +79,7 @@ class TaskApplicationService:
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
-            result = self.orchestrator.route_task(
-                UserTask(
-                    route="db_analysis",
-                    business_code=request.business_code,
-                    objective=request.objective,
-                    query_name=request.query_name,
-                    sql=request.sql,
-                    operations=request.operations,
-                    source_profile=request.source_profile,
-                    clean_profile=request.clean_profile,
-                    analysis_profile=request.analysis_profile,
-                    chart_profile=request.chart_profile,
-                    report_profile=request.report_profile,
-                ),
-                context=context,
-            )
+            result = self.execution_service.run_db_analysis(context, request)
             return self._finalize_task(context.task_id, context.session_id, result)
         except Exception as exc:
             error = WorkflowError(code="task_execution_failed", message=str(exc), step="application_service")

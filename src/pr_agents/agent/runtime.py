@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent, RunContext
@@ -41,9 +40,9 @@ class AgentDeps:
     task_service: TaskApplicationService
     session_repository: AgentSessionRepository
     context: AgentContext
-    demo_data_path: Path
     queue: asyncio.Queue[AgentStreamEvent]
     mode: str
+    active_mode: str
     latest_report_text: str = ""
     latest_report_artifact_id: str | None = None
     latest_task_id: str | None = None
@@ -165,28 +164,36 @@ class AgentRuntime:
         task_service: TaskApplicationService,
         context_manager: ContextManager,
         agent_model: Model,
-        demo_data_path: Path,
+        fallback_agent_model: Model | None,
         mode: str,
     ) -> None:
         self.session_repository = session_repository
         self.task_service = task_service
         self.context_manager = context_manager
-        self.demo_data_path = demo_data_path
         self._mode = mode
-        self.agent = Agent(
-            agent_model,
-            deps_type=AgentDeps,
-            instructions=self._instructions,
-            name="pr_agents_runtime",
+        self.agent = self._build_agent(agent_model, "pr_agents_runtime")
+        self.fallback_agent = (
+            self._build_agent(fallback_agent_model, "pr_agents_runtime_fallback")
+            if fallback_agent_model is not None
+            else None
         )
-        self._register_tools()
 
     @property
     def mode(self) -> str:
         return self._mode
 
-    def _register_tools(self) -> None:
-        @self.agent.tool
+    def _build_agent(self, agent_model: Model, name: str) -> Agent[AgentDeps, str]:
+        agent = Agent(
+            agent_model,
+            deps_type=AgentDeps,
+            instructions=self._instructions,
+            name=name,
+        )
+        self._register_tools(agent)
+        return agent
+
+    def _register_tools(self, agent: Agent[AgentDeps, str]) -> None:
+        @agent.tool
         async def run_file_analysis_workflow(
             ctx: RunContext[AgentDeps],
             business_code: str = "A_DEMO",
@@ -195,6 +202,13 @@ class AgentRuntime:
             source_pattern: str = "per_business_file",
         ) -> str:
             deps = ctx.deps
+            source = deps.context.latest_source
+            if not source or source.get("source_type") != "file":
+                return await self._fail_missing_source(
+                    deps,
+                    "run_file_analysis_workflow",
+                    "No file source is registered for this session. Register a file source or use the file demo first.",
+                )
             title = f"Run file analysis workflow for {business_code}"
             step_id = await deps.start_tool_step(
                 title,
@@ -210,9 +224,12 @@ class AgentRuntime:
                 FileAnalysisRequest(
                     business_code=business_code,
                     objective=objective or deps.context.user_message,
-                    file_name=deps.demo_data_path.name,
-                    content=deps.demo_data_path.read_text(encoding="utf-8"),
-                    source_profile={"source_pattern": source_pattern, "data_version": "demo-v1"},
+                    file_name=source["payload"]["file_name"],
+                    content=source["payload"]["content"],
+                    source_profile={
+                        **source.get("metadata", {}).get("source_profile", {}),
+                        "source_pattern": source_pattern,
+                    },
                     chart_profile={"chart_type": chart_type},
                     report_profile={"template": "demo-template"},
                     session_id=deps.session_id,
@@ -220,7 +237,7 @@ class AgentRuntime:
             )
             return await self._handle_task_response(deps, step_id, response, business_code, "file")
 
-        @self.agent.tool
+        @agent.tool
         async def run_db_analysis_workflow(
             ctx: RunContext[AgentDeps],
             business_code: str = "A_DEMO",
@@ -228,6 +245,13 @@ class AgentRuntime:
             chart_type: str = "scientific_plot",
         ) -> str:
             deps = ctx.deps
+            source = deps.context.latest_source
+            if not source or source.get("source_type") != "database":
+                return await self._fail_missing_source(
+                    deps,
+                    "run_db_analysis_workflow",
+                    "No database source is registered for this session. Register a database source or use the database demo first.",
+                )
             title = f"Run database analysis workflow for {business_code}"
             step_id = await deps.start_tool_step(
                 title,
@@ -242,9 +266,15 @@ class AgentRuntime:
                 DatabaseAnalysisRequest(
                     business_code=business_code,
                     objective=objective or deps.context.user_message,
-                    query_name="demo_query",
-                    sql="select * from cleaned_demo_data",
-                    source_profile={"source_pattern": "per_business_file", "data_version": "demo-v1"},
+                    query_name=source["payload"]["query_name"],
+                    sql=source["payload"]["sql"],
+                    source_profile={
+                        **source.get("metadata", {}).get("source_profile", {}),
+                        "source_pattern": source.get("metadata", {}).get("source_profile", {}).get(
+                            "source_pattern",
+                            "per_business_file",
+                        ),
+                    },
                     chart_profile={"chart_type": chart_type},
                     report_profile={"template": "demo-template"},
                     session_id=deps.session_id,
@@ -252,7 +282,7 @@ class AgentRuntime:
             )
             return await self._handle_task_response(deps, step_id, response, business_code, "database")
 
-        @self.agent.tool
+        @agent.tool
         async def load_latest_report(ctx: RunContext[AgentDeps]) -> str:
             deps = ctx.deps
             step_id = await deps.start_tool_step("Load latest report", "load_latest_report", {})
@@ -275,7 +305,7 @@ class AgentRuntime:
             )
             return report_text
 
-        @self.agent.tool
+        @agent.tool
         async def summarize_report(ctx: RunContext[AgentDeps]) -> str:
             deps = ctx.deps
             step_id = await deps.start_tool_step("Summarize latest report", "summarize_report", {})
@@ -344,6 +374,50 @@ class AgentRuntime:
             f"Report summary: {result.report.summary if result.report else 'n/a'}."
         )
 
+    async def _fail_missing_source(self, deps: AgentDeps, tool_name: str, message: str) -> str:
+        step_id = await deps.start_tool_step(
+            f"Resolve source for {tool_name}",
+            tool_name,
+            {"source": deps.context.latest_source or "missing"},
+        )
+        await deps.fail_tool_step(step_id, message)
+        return message
+
+    async def _run_with_fallback(self, request_content: str, deps: AgentDeps, event_handler) -> Any:
+        try:
+            return await self.agent.run(
+                request_content,
+                deps=deps,
+                event_stream_handler=event_handler,
+            )
+        except Exception as exc:
+            if (
+                self.fallback_agent is None
+                or deps.current_step_ids
+                or deps.assistant_started
+                or deps.mode != "llm"
+            ):
+                raise
+            deps.active_mode = "fake"
+            self.session_repository.update_run(
+                deps.run_id,
+                AgentRunStatus.RUNNING,
+                metadata={
+                    "model_mode_used": "fake",
+                    "used_fallback": True,
+                    "fallback_reason": str(exc),
+                },
+            )
+            await deps.emit(
+                "model_fallback",
+                {"requested_mode": deps.mode, "active_mode": "fake", "reason": str(exc)},
+            )
+            return await self.fallback_agent.run(
+                request_content,
+                deps=deps,
+                event_stream_handler=event_handler,
+            )
+
     async def stream_run_events(self, session_id: str, run_id: str):
         run = self.session_repository.get_run(run_id)
         if run is None or run.session_id != session_id:
@@ -354,13 +428,19 @@ class AgentRuntime:
             return
 
         request_content = run.metadata.get("request_content", run.goal)
+        request_source_id = run.metadata.get("source_id")
         self.session_repository.update_run(
             run_id,
             AgentRunStatus.RUNNING,
             summary="Run started.",
-            metadata={"state": "running"},
+            metadata={
+                "state": "running",
+                "model_mode_requested": self.mode,
+                "model_mode_used": self.mode,
+                "used_fallback": False,
+            },
         )
-        context = self.context_manager.build_context(session_id, request_content)
+        context = self.context_manager.build_context(session_id, request_content, request_source_id)
         queue: asyncio.Queue[AgentStreamEvent] = asyncio.Queue()
         deps = AgentDeps(
             session_id=session_id,
@@ -368,9 +448,9 @@ class AgentRuntime:
             task_service=self.task_service,
             session_repository=self.session_repository,
             context=context,
-            demo_data_path=self.demo_data_path,
             queue=queue,
             mode=self.mode,
+            active_mode=self.mode,
             latest_report_text=context.latest_report_text,
             latest_report_artifact_id=context.latest_report_artifact_id,
         )
@@ -403,6 +483,7 @@ class AgentRuntime:
             {
                 "goal": request_content,
                 "intent_mode": self.mode,
+                "source_id": request_source_id,
                 "debug": debug_metadata,
             },
         )
@@ -416,11 +497,7 @@ class AgentRuntime:
 
         async def run_agent() -> None:
             try:
-                result = await self.agent.run(
-                    request_content,
-                    deps=deps,
-                    event_stream_handler=event_handler,
-                )
+                result = await self._run_with_fallback(request_content, deps, event_handler)
                 if deps.current_step_ids:
                     final_text = deps.assistant_text.strip()
                     if not final_text:
@@ -441,7 +518,7 @@ class AgentRuntime:
                         "report_artifact_id": deps.latest_report_artifact_id,
                         "report_preview": deps.report_preview,
                         "business_code": deps.latest_business_code,
-                        "intent_mode": self.mode,
+                        "intent_mode": deps.active_mode,
                         "summary_only": deps.last_tool_name == "summarize_report",
                     },
                 )
@@ -507,9 +584,12 @@ class AgentRuntime:
             "You are a concise data analysis agent. "
             "Reply directly for normal conversation. "
             "Use tools when the user asks you to run a file analysis, run a database analysis, show the latest report, or summarize the latest report. "
+            "Only run analysis tools when a matching session source is available. If no file or database source is registered, tell the user to register one or use a demo source first. "
             "When a tool is needed, do not send any explanatory preamble before calling the tool. Call the tool first. "
             "After all required tools finish, provide one concise final answer in the user's language without exposing internal implementation details. "
             "Do not call load_latest_report after a successful analysis unless the user explicitly asks to see the report text. "
+            f"available_source_count={len(context.available_sources)}; "
+            f"latest_source_type={(context.latest_source or {}).get('source_type', 'none')}; "
             f"Session context: latest_report_available={bool(context.latest_report_artifact_id)}; "
             f"latest_report_summary={context.latest_report_summary or 'none'}; "
             f"latest_task_business_code={latest_task.get('business_code', 'none')}."

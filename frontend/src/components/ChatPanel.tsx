@@ -10,7 +10,7 @@ interface ChatPanelProps {
   quickPrompts: QuickPrompt[]
   onPromptChange: (value: string) => void
   onSend: () => void
-  onQuickPrompt: (prompt: string) => void
+  onQuickPrompt: (prompt: QuickPrompt) => void
 }
 
 function roleLabel(role: string): string {
@@ -99,7 +99,7 @@ export function ChatPanel({
               key={item.label}
               className="ghost-button compact"
               type="button"
-              onClick={() => onQuickPrompt(item.prompt)}
+              onClick={() => onQuickPrompt(item)}
             >
               {item.label}
             </button>

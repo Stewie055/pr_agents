@@ -10,7 +10,7 @@ const run: AgentRun = {
   status: 'running',
   summary: 'Run started.',
   intent_mode: 'fake',
-  metadata: {},
+  metadata: { model_mode_used: 'fake', used_fallback: true },
   steps: [
     {
       step_id: 'step-1',
@@ -84,4 +84,5 @@ test('renders workbench sections for current run output', () => {
   expect(screen.getByTestId('step-timeline')).toBeInTheDocument()
   expect(screen.getByTestId('metrics-table')).toHaveTextContent('row_count')
   expect(screen.getByTestId('report-preview')).toHaveTextContent('Report body')
+  expect(screen.getByText(/fell back to fake mode/i)).toBeInTheDocument()
 })

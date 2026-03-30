@@ -3,8 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from pr_agents.bootstrap import build_api_app
-from pr_agents.bootstrap import build_components
+from pr_agents.bootstrap import build_api_app, build_components
 from pr_agents.models import IntentMode
 from pr_agents.settings import Settings
 
@@ -105,9 +104,7 @@ def test_non_text_artifact_returns_415(tmp_path: Path) -> None:
 
     from pr_agents.bootstrap import build_components
 
-    _, task_service, _ = build_components(
-        build_test_settings(tmp_path)
-    )
+    task_service, _ = build_components(build_test_settings(tmp_path))
     artifact = task_service.get_artifact(artifact_id)
     assert artifact is not None
     artifact.uri = str(binary_path)
@@ -228,9 +225,18 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert create_response.status_code == 200
     session_id = create_response.json()["session_id"]
 
+    source_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/demo-sources/a_demo_file",
+    )
+    assert source_response.status_code == 200
+    source_id = source_response.json()["source_id"]
+
     start_response = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
-        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+        json={
+            "content": "Please use A_DEMO file data to generate a scientific plot and report.",
+            "source_id": source_id,
+        },
     )
     assert start_response.status_code == 200
     start_payload = start_response.json()
@@ -252,6 +258,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     assert payload["runs"]
     assert payload["runs"][0]["steps"]
+    assert payload["sources"]
     assert "prompt_snapshot" in payload["runs"][0]["metadata"]
     assert "memory_snapshot" in payload["runs"][0]["metadata"]
     result_message = next(
@@ -293,9 +300,15 @@ def test_agent_session_database_demo_flow(tmp_path: Path) -> None:
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    source_id = client.post(
+        f"/api/v1/agent/sessions/{session_id}/demo-sources/a_demo_db",
+    ).json()["source_id"]
     start_payload = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
-        json={"content": "Please use database data to generate a scientific plot and report for A_DEMO."},
+        json={
+            "content": "Please use database data to generate a scientific plot and report for A_DEMO.",
+            "source_id": source_id,
+        },
     ).json()
     events = consume_sse(client, start_payload["stream_url"])
     payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
@@ -336,9 +349,15 @@ def test_agent_session_artifact_proxy_reads_report(tmp_path: Path) -> None:
     client = TestClient(app)
 
     session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    source_id = client.post(
+        f"/api/v1/agent/sessions/{session_id}/demo-sources/a_demo_file",
+    ).json()["source_id"]
     start_payload = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
-        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+        json={
+            "content": "Please use A_DEMO file data to generate a scientific plot and report.",
+            "source_id": source_id,
+        },
     ).json()
     consume_sse(client, start_payload["stream_url"])
     payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
@@ -384,3 +403,38 @@ def test_task_result_is_restored_after_rebuilding_services(tmp_path: Path) -> No
     assert payload["result"] is not None
     assert payload["result"]["report"] is not None
     assert payload["result"]["chart"]["chart_type"] == "scientific_plot"
+
+
+def test_agent_source_registration_and_listing(tmp_path: Path) -> None:
+    app = build_api_app(build_test_settings(tmp_path))
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    register_response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/sources/file",
+        json={"file_name": "demo.csv", "content": "a,b\n1,2\n", "source_profile": {"source_pattern": "per_business_file"}},
+    )
+
+    assert register_response.status_code == 200
+    source_payload = register_response.json()
+    assert source_payload["source_type"] == "file"
+
+    list_response = client.get(f"/api/v1/agent/sessions/{session_id}/sources")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+
+
+def test_agent_message_without_source_returns_guidance(tmp_path: Path) -> None:
+    app = build_api_app(build_test_settings(tmp_path))
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    start_payload = client.post(
+        f"/api/v1/agent/sessions/{session_id}/messages",
+        json={"content": "Please use A_DEMO file data to generate a scientific plot and report."},
+    ).json()
+    events = consume_sse(client, start_payload["stream_url"])
+
+    assert any(event["event"] == "step_failed" for event in events)
+    completed = next(event for event in events if event["event"] == "assistant_completed")
+    assert "Register a file source" in completed["data"]["data"]["message"]
