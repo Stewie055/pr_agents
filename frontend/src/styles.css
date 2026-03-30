@@ -63,7 +63,7 @@ pre {
 
 .chat-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
   padding: 20px;
   border-right: 1px solid rgba(215, 207, 191, 0.7);
@@ -87,6 +87,10 @@ pre {
   padding: 18px;
 }
 
+.project-card.compact {
+  padding: 14px 16px;
+}
+
 .project-card h1,
 .workbench-header h2,
 .debug-drawer-header h2 {
@@ -94,6 +98,10 @@ pre {
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
   font-size: 28px;
   line-height: 1.05;
+}
+
+.project-card.compact h1 {
+  font-size: 22px;
 }
 
 .eyebrow,
@@ -146,6 +154,28 @@ pre {
   margin: 6px 0 0;
 }
 
+.context-pill-row,
+.composer-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-pill-row {
+  margin-top: 12px;
+}
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .quick-prompt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -164,6 +194,12 @@ pre {
 .ghost-button {
   background: rgba(255, 255, 255, 0.72);
   color: var(--text);
+}
+
+.ghost-button.compact {
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 12px;
 }
 
 .primary-button {

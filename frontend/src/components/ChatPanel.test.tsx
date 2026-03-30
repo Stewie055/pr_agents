@@ -49,6 +49,8 @@ test('renders messages and submits prompt from textarea', async () => {
 
   expect(screen.getByText('Ready for analysis.')).toBeInTheDocument()
   expect(screen.getAllByTestId('tool-status-pill')).toHaveLength(1)
+  expect(screen.queryByText('Task Background')).not.toBeInTheDocument()
+  expect(screen.getByText('Run File Demo')).toBeInTheDocument()
 
   await user.click(screen.getByTestId('send-message'))
   expect(onSend).toHaveBeenCalledTimes(1)

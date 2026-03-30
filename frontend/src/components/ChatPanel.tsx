@@ -39,41 +39,16 @@ export function ChatPanel({
 }: ChatPanelProps) {
   return (
     <section className="chat-panel">
-      <div className="panel-card project-card">
+      <div className="panel-card project-card compact">
         <p className="eyebrow">Diagnostic Agent</p>
         <h1>Single-Agent React Workspace</h1>
         <p className="panel-copy">
-          Chat is the operator entry point. The workbench carries the structured outputs, and
-          the debug drawer stays available for observability without dominating the default view.
+          Chat leads. Workbench carries outputs. Debug stays in the drawer.
         </p>
-        <div className="context-grid">
-          <div className="context-item">
-            <span>Mode</span>
-            <strong>PydanticAI React loop</strong>
-          </div>
-          <div className="context-item">
-            <span>Scope</span>
-            <strong>Single agent / current run</strong>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel-card quick-prompt-card">
-        <div className="section-heading">
-          <h2>Task Background</h2>
-          <p>Start with a demo run or ask for a report follow-up.</p>
-        </div>
-        <div className="quick-prompt-grid">
-          {quickPrompts.map((item) => (
-            <button
-              key={item.label}
-              className="ghost-button"
-              type="button"
-              onClick={() => onQuickPrompt(item.prompt)}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="context-pill-row">
+          <span className="context-pill">PydanticAI React loop</span>
+          <span className="context-pill">Single agent</span>
+          <span className="context-pill">Current run</span>
         </div>
       </div>
 
@@ -118,6 +93,18 @@ export function ChatPanel({
         <label className="composer-label" htmlFor="prompt">
           Prompt
         </label>
+        <div className="composer-quick-prompts">
+          {quickPrompts.map((item) => (
+            <button
+              key={item.label}
+              className="ghost-button compact"
+              type="button"
+              onClick={() => onQuickPrompt(item.prompt)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
         <textarea
           id="prompt"
           data-testid="prompt"
