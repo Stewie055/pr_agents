@@ -60,6 +60,11 @@ def _is_report_summary_request(content: str) -> bool:
     )
 
 
+def _is_cancel_request(content: str) -> bool:
+    lower = content.lower()
+    return "cancel" in lower or "取消" in content or "停止任务" in content
+
+
 def _looks_like_analysis_request(content: str) -> bool:
     lower = content.lower()
     markers = (
@@ -153,15 +158,13 @@ class FakeLLM:
         retry_prompt = next((part for part in last_message.parts if isinstance(part, RetryPromptPart)), None)
         if retry_prompt is not None:
             retry_tool_name = retry_prompt.tool_name or ""
-            if retry_tool_name == "run_db_analysis_workflow":
+            if retry_tool_name in {"run_db_analysis_workflow", "analyze_source"}:
                 user_prompt = self._latest_user_prompt(messages)
                 return {
                     "kind": "tool",
-                    "tool_name": "run_db_analysis_workflow",
+                    "tool_name": retry_tool_name,
                     "tool_args": {
-                        "business_code": _detect_business_code(user_prompt),
                         "objective": user_prompt,
-                        "chart_type": "scientific_plot",
                     },
                     "tool_call_id": f"call-{uuid4().hex[:8]}",
                 }
@@ -191,6 +194,13 @@ class FakeLLM:
                 "tool_args": {},
                 "tool_call_id": f"call-{uuid4().hex[:8]}",
             }
+        if _is_cancel_request(user_prompt):
+            return {
+                "kind": "tool",
+                "tool_name": "cancel_task",
+                "tool_args": {},
+                "tool_call_id": f"call-{uuid4().hex[:8]}",
+            }
         if _is_report_request(user_prompt):
             return {
                 "kind": "tool",
@@ -199,18 +209,10 @@ class FakeLLM:
                 "tool_call_id": f"call-{uuid4().hex[:8]}",
             }
         if _looks_like_analysis_request(user_prompt):
-            tool_name = "run_db_analysis_workflow" if entry == AgentEntry.DATABASE.value else "run_file_analysis_workflow"
-            tool_args = {
-                "business_code": business_code,
-                "objective": user_prompt,
-                "chart_type": "scientific_plot",
-            }
-            if tool_name == "run_file_analysis_workflow":
-                tool_args["source_pattern"] = _detect_source_pattern(business_code)
             return {
                 "kind": "tool",
-                "tool_name": tool_name,
-                "tool_args": tool_args,
+                "tool_name": "analyze_source",
+                "tool_args": {"objective": user_prompt},
                 "tool_call_id": f"call-{uuid4().hex[:8]}",
             }
         return {"kind": "text", "text": _chat_reply(user_prompt)}

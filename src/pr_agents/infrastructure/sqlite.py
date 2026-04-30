@@ -202,7 +202,7 @@ class TaskRepository(SQLiteRepository):
         error_summary: dict | None = None,
     ) -> TaskRecord:
         now = utc_now()
-        completed_at = now if status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED} else None
+        completed_at = now if status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED} else None
         with self._connect() as conn:
             conn.execute(
                 """

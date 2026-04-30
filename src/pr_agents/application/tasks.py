@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import mimetypes
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +18,9 @@ from pr_agents.models import (
     TaskRecord,
     TaskResponse,
     TaskStatus,
+    AgentSourceRecord,
+    AgentSourceType,
+    CancelTaskResponse,
     WorkflowError,
     WorkflowResult,
 )
@@ -32,6 +38,8 @@ class TaskApplicationService:
         self.task_repository = task_repository
         self.artifact_repository = artifact_repository
         self._results: dict[str, WorkflowResult] = {}
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis-task")
+        self._cancel_flags: dict[str, threading.Event] = {}
 
     def submit_file_analysis(self, request: FileAnalysisRequest) -> TaskResponse:
         context = self._create_context(request.session_id, request.objective)
@@ -48,7 +56,7 @@ class TaskApplicationService:
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
-            result = self.execution_service.run_file_analysis(context, request)
+            result = self._execute_file_analysis(context, request)
             return self._finalize_task(context.task_id, context.session_id, result)
         except Exception as exc:
             error = WorkflowError(code="task_execution_failed", message=str(exc), step="application_service")
@@ -79,7 +87,7 @@ class TaskApplicationService:
         )
         self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
         try:
-            result = self.execution_service.run_db_analysis(context, request)
+            result = self._execute_db_analysis(context, request)
             return self._finalize_task(context.task_id, context.session_id, result)
         except Exception as exc:
             error = WorkflowError(code="task_execution_failed", message=str(exc), step="application_service")
@@ -94,6 +102,71 @@ class TaskApplicationService:
                 status=TaskStatus.FAILED,
                 error=error,
             )
+
+    def submit_source_analysis_async(
+        self,
+        *,
+        session_id: str,
+        source: AgentSourceRecord,
+        objective: str,
+    ) -> TaskResponse:
+        request = self._request_from_source(session_id, source, objective)
+        task_type = "file_analysis" if source.source_type == AgentSourceType.CSV_FILE else "db_analysis"
+        context = self._create_context(session_id, objective)
+        self.task_repository.create_task(
+            task_id=context.task_id,
+            session_id=context.session_id,
+            task_type=task_type,
+            objective=objective,
+            input_summary={
+                "business_code": request.business_code,
+                "source_id": source.source_id,
+                "source_type": source.source_type.value,
+                "source_name": source.name,
+                "execution": "async",
+            },
+        )
+        self.task_repository.update_task_status(context.task_id, TaskStatus.QUEUED)
+        cancel_flag = threading.Event()
+        self._cancel_flags[context.task_id] = cancel_flag
+        self._executor.submit(self._run_background_task, context, request, task_type, cancel_flag)
+        return TaskResponse(task_id=context.task_id, session_id=context.session_id, status=TaskStatus.QUEUED)
+
+    def cancel_task(self, task_id: str) -> CancelTaskResponse:
+        task = self.task_repository.get_task(task_id)
+        if task is None:
+            return CancelTaskResponse(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                cancelled=False,
+                message="task not found",
+            )
+        if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED}:
+            return CancelTaskResponse(
+                task_id=task_id,
+                status=task.status,
+                cancelled=False,
+                message=f"task already {task.status.value}",
+            )
+        self._cancel_flags.setdefault(task_id, threading.Event()).set()
+        if task.status == TaskStatus.QUEUED:
+            updated = self.task_repository.update_task_status(
+                task_id,
+                TaskStatus.CANCELLED,
+                error_summary={"code": "task_cancelled", "message": "Task cancelled before execution."},
+            )
+            return CancelTaskResponse(
+                task_id=task_id,
+                status=updated.status,
+                cancelled=True,
+                message="task cancelled",
+            )
+        return CancelTaskResponse(
+            task_id=task_id,
+            status=task.status,
+            cancelled=True,
+            message="cancellation requested",
+        )
 
     def get_task(self, task_id: str) -> TaskDetailResponse | None:
         task = self.task_repository.get_task(task_id)
@@ -133,12 +206,112 @@ class TaskApplicationService:
         media_type, _ = mimetypes.guess_type(path.name)
         return path.read_bytes(), media_type or "application/octet-stream"
 
+    def wait_for_task(
+        self,
+        task_id: str,
+        *,
+        timeout_seconds: float = 30.0,
+        poll_interval: float = 0.05,
+    ) -> TaskDetailResponse | None:
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            detail = self.get_task(task_id)
+            if detail is None:
+                return None
+            if detail.task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED}:
+                return detail
+            time.sleep(poll_interval)
+        return self.get_task(task_id)
+
     def _create_context(self, session_id: str | None, objective: str) -> TaskContext:
         context = TaskContext(user_request=objective)
         if session_id:
             context.session_id = session_id
         context.task_id = f"task-{uuid4().hex[:8]}"
         return context
+
+    def _run_background_task(
+        self,
+        context: TaskContext,
+        request: FileAnalysisRequest | DatabaseAnalysisRequest,
+        task_type: str,
+        cancel_flag: threading.Event,
+    ) -> None:
+        if cancel_flag.is_set():
+            self.task_repository.update_task_status(
+                context.task_id,
+                TaskStatus.CANCELLED,
+                error_summary={"code": "task_cancelled", "message": "Task cancelled before execution."},
+            )
+            return
+        self.task_repository.update_task_status(context.task_id, TaskStatus.RUNNING)
+        try:
+            if cancel_flag.is_set():
+                raise _TaskCancelled("Task cancelled before business execution.")
+            if task_type == "file_analysis":
+                result = self._execute_file_analysis(context, request)  # type: ignore[arg-type]
+            else:
+                result = self._execute_db_analysis(context, request)  # type: ignore[arg-type]
+            if cancel_flag.is_set():
+                raise _TaskCancelled("Task cancelled after business execution.")
+            self._finalize_task(context.task_id, context.session_id, result)
+        except _TaskCancelled as exc:
+            self.task_repository.update_task_status(
+                context.task_id,
+                TaskStatus.CANCELLED,
+                error_summary={"code": "task_cancelled", "message": str(exc)},
+            )
+        except Exception as exc:  # pragma: no cover - exercised via API error state
+            error = WorkflowError(code="task_execution_failed", message=str(exc), step="background_task")
+            self.task_repository.update_task_status(
+                context.task_id,
+                TaskStatus.FAILED,
+                error_summary=error.model_dump(mode="json"),
+            )
+
+    def _execute_file_analysis(self, context: TaskContext, request: FileAnalysisRequest) -> WorkflowResult:
+        return self.execution_service.run_file_analysis(context, request)
+
+    def _execute_db_analysis(self, context: TaskContext, request: DatabaseAnalysisRequest) -> WorkflowResult:
+        return self.execution_service.run_db_analysis(context, request)
+
+    def _request_from_source(
+        self,
+        session_id: str,
+        source: AgentSourceRecord,
+        objective: str,
+    ) -> FileAnalysisRequest | DatabaseAnalysisRequest:
+        source_profile = {
+            **source.metadata.get("source_profile", {}),
+            "source_id": source.source_id,
+            "schema_summary": source.metadata.get("schema_summary", {}),
+        }
+        business_code = source.metadata.get("business_code")
+        if source.source_type == AgentSourceType.CSV_FILE:
+            content = source.payload.get("content")
+            storage_ref = source.payload.get("storage_ref")
+            if not content and storage_ref:
+                content = Path(str(storage_ref)).read_text(encoding="utf-8")
+            return FileAnalysisRequest(
+                session_id=session_id,
+                business_code=str(business_code or "file_analysis"),
+                objective=objective,
+                file_name=str(source.payload.get("file_name") or source.name),
+                content=str(content or ""),
+                source_profile=source_profile,
+                chart_profile={"chart_type": "diagnostic_bar"},
+                report_profile={"template": "structured-lab-report"},
+            )
+        return DatabaseAnalysisRequest(
+            session_id=session_id,
+            business_code=str(business_code or "db_analysis"),
+            objective=objective,
+            query_name=str(source.payload.get("query_name") or source.name),
+            sql=str(source.payload.get("sql") or ""),
+            source_profile=source_profile,
+            chart_profile={"chart_type": "diagnostic_bar"},
+            report_profile={"template": "structured-lab-report"},
+        )
 
     def _finalize_task(self, task_id: str, session_id: str, result: WorkflowResult) -> TaskResponse:
         self._results[task_id] = result
@@ -183,3 +356,7 @@ class TaskApplicationService:
             "report_id": result.report.report_id if result.report else None,
             "error_count": len(result.errors),
         }
+
+
+class _TaskCancelled(Exception):
+    pass

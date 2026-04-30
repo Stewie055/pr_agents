@@ -2,58 +2,113 @@
 
 ## 分层
 
-依赖方向固定为：
+当前实现按变化方向分层，而不是按概念堆层：
 
-`WebUI -> Agent Orchestration -> Tool -> Workflow -> Service -> Infrastructure`
+```text
+WebUI
+  -> REST API / SSE API
+  -> Application Services
+  -> Agent Runtime
+  -> Agent Tools
+  -> Use Cases / Task Service
+  -> Business Capabilities / Stub Adapters
+  -> Repositories / File Artifact Store
+```
 
-### WebUI
+## WebUI
 
-正式入口是独立 `React + Vite + TypeScript` 工作台。前端负责会话交互、SSE 消费、Workbench 展示和 Debug Drawer，不承载领域逻辑。
+正式入口是 `React + Vite + TypeScript` 科研实验室风格工作台。
 
-### Agent Orchestration
+职责：
 
-第一阶段采用单一 `ReAct` 模式，不引入 Planner。
+- CSV 上传、SQL source 注册和显式 source 选择
+- fake/LLM 模型模式切换
+- 会话消息和 prompt 输入
+- Agent 工具步骤、后台任务状态、artifact 预览
+- 报告、图表图片、表格结果展示
+- 取消当前任务
 
-当前由以下模块组成：
+## API
 
-- `AgentRuntime`
-  单个 `PydanticAI Agent`，负责直接回复或调用 workflow-level tools
-- `ContextManager`
-  组装消息窗口、最近任务、最近报告和当前会话 source
-- `MemoryManager`
-  当前实现短期和中期记忆
-- `Event Stream`
-  推送 `run_started / tool_called / tool_result / assistant_* / run_* / session_snapshot`
+REST 管理资源，SSE 推送运行过程。
 
-### Tool
+- REST：session、source、message、task、artifact、cancel
+- SSE：run started、tool called、task queued、task status、artifact ready、assistant completed、run completed
 
-只向 Agent 暴露 workflow-level tools：
+## Agent Runtime
 
-- 文件分析
-- 数据库分析
-- 加载最近报告
-- 概括最近报告
+第一阶段采用单一 ReAct Agent。
 
-### Workflow
+职责：
 
-负责把多个 `Service` 步骤可靠串联，维护产物传递、失败终止和结构化结果。
+- 构建 PydanticAI Agent
+- 注册薄 tool
+- 运行一次 Agent run
+- 推送 run/tool/task/assistant 事件
+- 在 LLM 模式失败时回退 fake
 
-### Service
+不承担：
 
-负责领域业务能力抽象。当前仍由 `StubAnalysisPlatform` 提供可运行假实现，后续替换为 QT 适配实现。
+- CSV 解析
+- SQL 执行
+- 图表生成
+- 报告生成
+- 业务参数决策
 
-### Infrastructure
+## Agent Tools
 
-当前包含：
+主工具：
 
-- SQLite：session、task、run、run step、source、artifact 持久化
-- 本地 artifact 落盘
+- `analyze_source`
+- `load_latest_report`
+- `summarize_report`
+- `cancel_task`
 
-## 当前实现原则
+兼容保留：
 
-- `TaskApplicationService` 只负责任务状态、结果和产物持久化
-- 具体执行由 `AnalysisExecutionService` 调用 `WorkflowToolRegistry`
-- Agent 分析能力必须建立在会话级 source 上，不允许 runtime 内置 demo 文件或固定 SQL
-- demo 通过显式 `demo source` helper API 注入
-- `llm` 模式模型失败时，在同一 run 内回退到 `fake`
-- 长期记忆、RAG、Planner 保留为后续扩展位，不在第一阶段实现
+- `run_file_analysis_workflow`
+- `run_db_analysis_workflow`
+
+Tool 只做 schema 暴露和 use case 调用，业务规则在 application/service 层。
+
+## Application Services
+
+`AgentSessionService`：
+
+- 创建 session
+- 记录消息
+- 注册 CSV/SQL/demo source
+- 启动 Agent run
+- 格式化 SSE
+
+`TaskApplicationService`：
+
+- 创建任务
+- 后台异步执行
+- 取消任务
+- 持久化结果和 artifact
+- 提供任务查询和 artifact 读取
+
+## Business Capabilities
+
+`StubAnalysisPlatform` 模拟 QT 业务：
+
+- CSV 解析或 SQL 模拟查询
+- 数据清洗标记
+- 指标分析
+- SVG 图表图片生成
+- 结构化 Markdown 报告生成
+
+后续接真实 QT 代码时，应替换 capability adapter，而不是改 Agent Runtime。
+
+## Infrastructure
+
+- SQLite：session、message、source、run、run step、task、artifact、task result
+- Local files：CSV upload、table artifact、chart SVG、report markdown
+
+## 设计约束
+
+- 数据源必须显式选择，不再自动使用最新 source。
+- 缺 source 是 clarification，不是 workflow failure。
+- Planner/RAG/长期 memory 不进入第一阶段。
+- 单进程后台队列只用于开发雏形，生产可替换为 Celery/Redis/任务服务。

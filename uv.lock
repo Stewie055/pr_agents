@@ -1069,6 +1069,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pydantic-settings" },
+    { name = "python-multipart" },
 ]
 
 [package.dev-dependencies]
@@ -1083,6 +1084,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pydantic-settings" },
+    { name = "python-multipart" },
 ]
 
 [package.metadata.requires-dev]

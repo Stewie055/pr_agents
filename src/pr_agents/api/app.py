@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -60,6 +60,13 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
             raise HTTPException(status_code=404, detail="task not found")
         return task
 
+    @app.post("/api/v1/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str):
+        response = task_service.cancel_task(task_id)
+        if response.message == "task not found":
+            raise HTTPException(status_code=404, detail="task not found")
+        return response
+
     @app.get("/api/v1/sessions/{session_id}/tasks")
     def list_session_tasks(session_id: str):
         return SessionTasksResponse(session_id=session_id, tasks=task_service.list_session_tasks(session_id))
@@ -104,6 +111,22 @@ def create_api_app(task_service: TaskApplicationService, agent_session_service: 
     @app.post("/api/v1/agent/sessions/{session_id}/sources/file")
     def register_agent_file_source(session_id: str, request: RegisterFileSourceRequest):
         return agent_session_service.register_file_source(session_id, request)
+
+    @app.post("/api/v1/agent/sessions/{session_id}/sources/csv-upload")
+    async def upload_agent_csv_source(
+        session_id: str,
+        file: UploadFile = File(...),
+        business_code: str = Form("file_analysis"),
+    ):
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(status_code=415, detail="only csv files are supported")
+        content = await file.read()
+        return agent_session_service.register_uploaded_csv_source(
+            session_id,
+            file_name=file.filename,
+            content=content,
+            business_code=business_code,
+        )
 
     @app.post("/api/v1/agent/sessions/{session_id}/sources/database")
     def register_agent_database_source(session_id: str, request: RegisterDatabaseSourceRequest):

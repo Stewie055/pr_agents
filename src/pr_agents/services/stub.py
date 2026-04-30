@@ -47,7 +47,7 @@ class StubAnalysisPlatform(AnalysisPlatform):
             content = "\n".join(rows) + "\n"
         artifact = self.artifact_store.save_text(
             context,
-            ArtifactType.DATASET,
+            ArtifactType.TABLE,
             f"{business_code}_dataset_from_file.csv",
             content,
         )
@@ -78,7 +78,7 @@ class StubAnalysisPlatform(AnalysisPlatform):
         content = f"business_code,category,value\n{business_code},A,10\n{business_code},B,20\n"
         artifact = self.artifact_store.save_text(
             context,
-            ArtifactType.DATASET,
+            ArtifactType.TABLE,
             f"{business_code}_dataset_from_db.csv",
             content,
         )
@@ -180,7 +180,7 @@ class StubAnalysisPlatform(AnalysisPlatform):
         )
         artifact = self.artifact_store.save_text(
             context,
-            ArtifactType.CHART,
+            ArtifactType.CHART_IMAGE,
             f"{request.business_code}_{chart_type}.svg",
             svg,
         )
@@ -208,6 +208,16 @@ class StubAnalysisPlatform(AnalysisPlatform):
         chart: ChartArtifact | None,
         request: AnalysisRequest,
     ) -> ReportArtifact:
+        data_quality = (
+            f"- Rows: {dataset.row_count if dataset else 0}\n"
+            f"- Columns: {', '.join(dataset.columns) if dataset and dataset.columns else 'n/a'}\n"
+            "- Missing values: not detected in stub profile"
+        )
+        findings = "\n".join(f"- {insight}" for insight in analysis.insights)
+        artifact_refs = [
+            f"- Chart: {chart.artifact.artifact_id}" if chart else "- Chart: n/a",
+            f"- Table: {dataset.artifact.artifact_id}" if dataset and dataset.artifact else "- Table: n/a",
+        ]
         artifact = self.artifact_store.save_text(
             context,
             ArtifactType.REPORT,
@@ -215,9 +225,23 @@ class StubAnalysisPlatform(AnalysisPlatform):
             "\n".join(
                 [
                     f"# {request.objective}",
+                    "",
+                    "## 摘要",
                     f"business_code={request.business_code}",
                     analysis.summary,
-                    *(analysis.insights or []),
+                    "",
+                    "## 数据质量",
+                    data_quality,
+                    "",
+                    "## 关键发现",
+                    findings,
+                    "",
+                    "## 建议",
+                    "- Use the generated chart as a first-pass diagnostic view.",
+                    "- Replace the stub adapter with the target QT business adapter for production use.",
+                    "",
+                    "## 产物引用",
+                    *artifact_refs,
                 ]
             ),
         )
@@ -226,6 +250,6 @@ class StubAnalysisPlatform(AnalysisPlatform):
             report_id=f"report-{uuid4().hex[:8]}",
             title=f"Report for {dataset_id}",
             artifact=artifact,
-            sections=["summary", "insights"],
+            sections=["summary", "data_quality", "findings", "recommendations", "artifacts"],
             summary=analysis.summary,
         )

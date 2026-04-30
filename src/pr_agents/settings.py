@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     artifact_base_dir: str = "artifacts"
+    upload_base_dir: str = "artifacts/uploads"
     sqlite_path: str = "artifacts/app.db"
     api_host: str = "127.0.0.1"
     api_port: int = 8000

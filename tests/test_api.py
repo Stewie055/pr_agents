@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from pr_agents.bootstrap import build_api_app, build_components
-from pr_agents.models import IntentMode
+from pr_agents.models import IntentMode, TaskStatus
 from pr_agents.settings import Settings
 
 
@@ -264,7 +264,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     result_message = next(
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )
-    assert "scientific_plot" in result_message["content"]
+    assert "diagnostic_bar" in result_message["content"]
     assert "business_code=A_DEMO" not in result_message["content"]
     assert result_message["metadata"]["report_preview"].startswith("# ")
 
@@ -278,7 +278,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert any(event["event"] == "assistant_completed" for event in follow_up_events)
     follow_up_payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     assert len(follow_up_payload["messages"]) > len(payload["messages"])
-    assert "business_code=A_DEMO" in follow_up_payload["messages"][-1]["content"]
+    assert "business_code=file_analysis" in follow_up_payload["messages"][-1]["content"]
 
     summary_follow_up = client.post(
         f"/api/v1/agent/sessions/{session_id}/messages",
@@ -290,7 +290,7 @@ def test_agent_session_chat_flow_and_follow_up_report(tmp_path: Path) -> None:
     assert any(event["event"] == "assistant_completed" for event in summary_events)
     summary_payload = client.get(f"/api/v1/agent/sessions/{session_id}").json()
     summary_message = summary_payload["messages"][-1]
-    assert "Summary for A_DEMO:" in summary_message["content"]
+    assert "Summary for file_analysis:" in summary_message["content"]
     assert summary_message["metadata"]["summary_only"] is True
     assert summary_message["metadata"]["report_preview"].startswith("# ")
 
@@ -317,11 +317,11 @@ def test_agent_session_database_demo_flow(tmp_path: Path) -> None:
     assert payload["tasks"]
     assert payload["tasks"][0]["task_type"] == "db_analysis"
     run = payload["runs"][0]
-    assert run["steps"][0]["tool_name"] == "run_db_analysis_workflow"
+    assert run["steps"][0]["tool_name"] == "analyze_source"
     result_message = next(
         msg for msg in payload["messages"] if msg["role"] == "assistant" and msg["metadata"].get("task_id")
     )
-    assert "scientific_plot" in result_message["content"]
+    assert "diagnostic_bar" in result_message["content"]
 
 
 def test_agent_session_chat_message_does_not_trigger_plan_or_tool(tmp_path: Path) -> None:
@@ -478,11 +478,46 @@ def test_agent_source_registration_and_listing(tmp_path: Path) -> None:
 
     assert register_response.status_code == 200
     source_payload = register_response.json()
-    assert source_payload["source_type"] == "file"
+    assert source_payload["source_type"] == "csv_file"
 
     list_response = client.get(f"/api/v1/agent/sessions/{session_id}/sources")
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+
+def test_csv_upload_source_endpoint_profiles_file(tmp_path: Path) -> None:
+    app = build_api_app(build_test_settings(tmp_path))
+    client = TestClient(app)
+
+    session_id = client.post("/api/v1/agent/sessions").json()["session_id"]
+    response = client.post(
+        f"/api/v1/agent/sessions/{session_id}/sources/csv-upload",
+        files={"file": ("lab.csv", b"temperature,pressure\n21.5,101.2\n22.1,101.5\n", "text/csv")},
+        data={"business_code": "file_analysis"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"]["source_type"] == "csv_file"
+    assert payload["columns"] == ["temperature", "pressure"]
+    assert payload["row_count"] == 2
+
+
+def test_cancel_queued_task(tmp_path: Path) -> None:
+    task_service, _ = build_components(build_test_settings(tmp_path))
+    task = task_service.task_repository.create_task(
+        task_id="task-cancel",
+        session_id="session-cancel",
+        task_type="file_analysis",
+        objective="cancel this queued task",
+        input_summary={},
+    )
+    task_service.task_repository.update_task_status(task.task_id, TaskStatus.QUEUED)
+
+    response = task_service.cancel_task(task.task_id)
+
+    assert response.cancelled is True
+    assert response.status.value == "cancelled"
 
 
 def test_agent_message_without_source_returns_guidance(tmp_path: Path) -> None:
@@ -496,6 +531,11 @@ def test_agent_message_without_source_returns_guidance(tmp_path: Path) -> None:
     ).json()
     events = consume_sse(client, start_payload["stream_url"])
 
-    assert any(event["event"] == "step_failed" for event in events)
+    assert any(event["event"] == "tool_result" for event in events)
+    assert any(
+        event["event"] == "tool_result"
+        and event["data"]["data"].get("status") == "clarification_required"
+        for event in events
+    )
     completed = next(event for event in events if event["event"] == "assistant_completed")
-    assert "Register a file source" in completed["data"]["data"]["message"]
+    assert "CSV 数据源" in completed["data"]["data"]["message"]

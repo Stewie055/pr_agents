@@ -22,27 +22,21 @@ export function Workbench({
     <section className="workbench">
       <div className="workbench-header">
         <div>
-          <p className="eyebrow">Workbench</p>
-          <h2>Current Run Output</h2>
+          <p className="eyebrow">Output</p>
+          <h2>Run Dashboard</h2>
         </div>
-        <p className="workbench-copy">
-          Notebook-style execution output for the active run. Chat stays concise; artifacts land here.
-        </p>
       </div>
 
       {!run ? (
         <div className="empty-workbench" data-testid="workbench-empty">
-          <h3>Ready for a diagnostic run</h3>
-          <p>
-            The first tool-backed request will create a run overview, step timeline, metrics table,
-            chart preview, and report preview here.
-          </p>
+          <h3>No active run</h3>
+          <p>Select a source and send an analysis command.</p>
         </div>
       ) : (
         <div className="workbench-stack">
           <section className="workbench-card" data-testid="run-overview">
             <div className="card-head">
-              <h3>Run Overview</h3>
+              <h3>Run</h3>
               <span className={`status-pill ${run.status === 'failed' ? 'danger' : 'neutral'}`}>
                 {busy && run.status === 'running' ? 'running' : run.status}
               </span>
@@ -71,7 +65,7 @@ export function Workbench({
 
           <section className="workbench-card" data-testid="step-timeline">
             <div className="card-head">
-              <h3>Tool Timeline</h3>
+              <h3>Steps</h3>
               <span>{run.steps.length} step(s)</span>
             </div>
             {run.steps.length === 0 ? (
@@ -96,7 +90,7 @@ export function Workbench({
 
           <section className="workbench-card" data-testid="metrics-table">
             <div className="card-head">
-              <h3>Metrics Table</h3>
+              <h3>Metrics</h3>
               <span>{metrics.length} metric(s)</span>
             </div>
             {metrics.length === 0 ? (
@@ -131,7 +125,7 @@ export function Workbench({
 
           <section className="workbench-card" data-testid="chart-preview">
             <div className="card-head">
-              <h3>Chart Preview</h3>
+              <h3>Chart</h3>
               <span>{taskDetail?.result?.chart?.chart_type || 'pending'}</span>
             </div>
             {chartUrl ? (
@@ -143,7 +137,7 @@ export function Workbench({
 
           <section className="workbench-card" data-testid="report-preview">
             <div className="card-head">
-              <h3>Report Preview</h3>
+              <h3>Report</h3>
               <span>{taskDetail?.result?.report?.title || 'pending'}</span>
             </div>
             <pre className="report-preview">{reportPreview || 'Report preview will appear here.'}</pre>

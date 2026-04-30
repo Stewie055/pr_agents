@@ -40,15 +40,12 @@ export function ChatPanel({
   return (
     <section className="chat-panel">
       <div className="panel-card project-card compact">
-        <p className="eyebrow">Diagnostic Agent</p>
-        <h1>Single-Agent React Workspace</h1>
-        <p className="panel-copy">
-          Chat leads. Workbench carries outputs. Debug stays in the drawer.
-        </p>
+        <p className="eyebrow">Agent Console</p>
+        <h1>分析指令</h1>
         <div className="context-pill-row">
-          <span className="context-pill">PydanticAI React loop</span>
-          <span className="context-pill">Single agent</span>
-          <span className="context-pill">Current run</span>
+          <span className="context-pill">ReAct</span>
+          <span className="context-pill">Async</span>
+          <span className="context-pill">Artifacts</span>
         </div>
       </div>
 
@@ -91,7 +88,7 @@ export function ChatPanel({
 
       <div className="panel-card composer-card">
         <label className="composer-label" htmlFor="prompt">
-          Prompt
+          Command
         </label>
         <div className="composer-quick-prompts">
           {quickPrompts.map((item) => (
@@ -118,10 +115,10 @@ export function ChatPanel({
               onSend()
             }
           }}
-          placeholder="Describe the diagnostic task, ask for the latest report, or request a summary."
+          placeholder="例如：分析当前数据源，生成结构化报告和图表。"
         />
         <div className="composer-footer">
-          <p>Enter to send. Shift+Enter for newline.</p>
+          <p>{busy ? 'Running analysis' : 'Ready'}</p>
           <button
             className="primary-button"
             type="button"
@@ -129,7 +126,7 @@ export function ChatPanel({
             disabled={busy || !prompt.trim()}
             onClick={onSend}
           >
-            {busy ? 'Running...' : 'Send'}
+            {busy ? 'Running' : 'Send'}
           </button>
         </div>
       </div>

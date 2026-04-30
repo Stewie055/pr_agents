@@ -34,8 +34,6 @@ class ContextManager:
         selected_source = None
         if source_id:
             selected_source = next((source for source in sources if source.source_id == source_id), None)
-        if selected_source is None and sources:
-            selected_source = sources[-1]
 
         if tasks:
             latest_task = tasks[-1]

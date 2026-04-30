@@ -46,6 +46,7 @@ def build_components(
         task_service=task_service,
         runtime=runtime,
         demo_data_path="examples/demo_a.csv",
+        upload_dir=settings.upload_base_dir,
     )
     return task_service, agent_session_service
 

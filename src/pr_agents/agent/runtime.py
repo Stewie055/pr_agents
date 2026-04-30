@@ -17,6 +17,7 @@ from pr_agents.models import (
     FileAnalysisRequest,
     MessageRole,
     MessageType,
+    TaskResponse,
 )
 
 from .context import ContextManager
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 
     from pr_agents.application.tasks import TaskApplicationService
     from pr_agents.infrastructure import AgentSessionRepository
-    from pr_agents.models import TaskResponse
 
 
 def event_timestamp() -> str:
@@ -194,6 +194,50 @@ class AgentRuntime:
 
     def _register_tools(self, agent: Agent[AgentDeps, str]) -> None:
         @agent.tool
+        async def analyze_source(
+            ctx: RunContext[AgentDeps],
+            objective: str = "",
+        ) -> str:
+            deps = ctx.deps
+            source = deps.context.latest_source
+            if not source:
+                return await self._clarify_missing_source(
+                    deps,
+                    "analyze_source",
+                    "请先在左侧选择或上传一个 CSV 数据源，或者注册一个 SQL 数据源，然后再发起分析。",
+                )
+            source_type = source.get("source_type")
+            step_id = await deps.start_tool_step(
+                "Analyze selected source",
+                "analyze_source",
+                {
+                    "objective": objective or deps.context.user_message,
+                    "source_id": source.get("source_id"),
+                    "source_type": source_type,
+                    "business_code": source.get("metadata", {}).get("business_code"),
+                },
+            )
+            source_record = deps.session_repository.get_source(str(source["source_id"]))
+            if source_record is None:
+                return await self._clarify_missing_source(deps, "analyze_source", "选择的数据源不存在，请重新选择。")
+            response = deps.task_service.submit_source_analysis_async(
+                session_id=deps.session_id,
+                source=source_record,
+                objective=objective or deps.context.user_message,
+            )
+            await deps.emit(
+                "task_queued",
+                {"step_id": step_id, "task_id": response.task_id, "status": response.status.value},
+            )
+            return await self._handle_async_task_response(
+                deps,
+                step_id,
+                response.task_id,
+                str(source.get("metadata", {}).get("business_code") or source_type or "analysis"),
+                str(source_type or "source"),
+            )
+
+        @agent.tool
         async def run_file_analysis_workflow(
             ctx: RunContext[AgentDeps],
             business_code: str = "A_DEMO",
@@ -203,11 +247,11 @@ class AgentRuntime:
         ) -> str:
             deps = ctx.deps
             source = deps.context.latest_source
-            if not source or source.get("source_type") != "file":
-                return await self._fail_missing_source(
+            if not source or source.get("source_type") not in {"file", "csv_file"}:
+                return await self._clarify_missing_source(
                     deps,
                     "run_file_analysis_workflow",
-                    "No file source is registered for this session. Register a file source or use the file demo first.",
+                    "请先选择或上传一个 CSV 文件数据源。",
                 )
             title = f"Run file analysis workflow for {business_code}"
             step_id = await deps.start_tool_step(
@@ -220,22 +264,16 @@ class AgentRuntime:
                     "source_pattern": source_pattern,
                 },
             )
-            response = deps.task_service.submit_file_analysis(
-                FileAnalysisRequest(
-                    business_code=business_code,
-                    objective=objective or deps.context.user_message,
-                    file_name=source["payload"]["file_name"],
-                    content=source["payload"]["content"],
-                    source_profile={
-                        **source.get("metadata", {}).get("source_profile", {}),
-                        "source_pattern": source_pattern,
-                    },
-                    chart_profile={"chart_type": chart_type},
-                    report_profile={"template": "demo-template"},
-                    session_id=deps.session_id,
-                )
+            source_record = deps.session_repository.get_source(str(source["source_id"]))
+            if source_record is None:
+                return await self._clarify_missing_source(deps, "run_file_analysis_workflow", "选择的数据源不存在，请重新选择。")
+            response = deps.task_service.submit_source_analysis_async(
+                session_id=deps.session_id,
+                source=source_record,
+                objective=objective or deps.context.user_message,
             )
-            return await self._handle_task_response(deps, step_id, response, business_code, "file")
+            await deps.emit("task_queued", {"step_id": step_id, "task_id": response.task_id, "status": response.status.value})
+            return await self._handle_async_task_response(deps, step_id, response.task_id, business_code, "csv_file")
 
         @agent.tool
         async def run_db_analysis_workflow(
@@ -246,11 +284,11 @@ class AgentRuntime:
         ) -> str:
             deps = ctx.deps
             source = deps.context.latest_source
-            if not source or source.get("source_type") != "database":
-                return await self._fail_missing_source(
+            if not source or source.get("source_type") not in {"database", "sql_query"}:
+                return await self._clarify_missing_source(
                     deps,
                     "run_db_analysis_workflow",
-                    "No database source is registered for this session. Register a database source or use the database demo first.",
+                    "请先选择或注册一个 SQL 数据源。",
                 )
             title = f"Run database analysis workflow for {business_code}"
             step_id = await deps.start_tool_step(
@@ -262,25 +300,16 @@ class AgentRuntime:
                     "chart_type": chart_type,
                 },
             )
-            response = deps.task_service.submit_db_analysis(
-                DatabaseAnalysisRequest(
-                    business_code=business_code,
-                    objective=objective or deps.context.user_message,
-                    query_name=source["payload"]["query_name"],
-                    sql=source["payload"]["sql"],
-                    source_profile={
-                        **source.get("metadata", {}).get("source_profile", {}),
-                        "source_pattern": source.get("metadata", {}).get("source_profile", {}).get(
-                            "source_pattern",
-                            "per_business_file",
-                        ),
-                    },
-                    chart_profile={"chart_type": chart_type},
-                    report_profile={"template": "demo-template"},
-                    session_id=deps.session_id,
-                )
+            source_record = deps.session_repository.get_source(str(source["source_id"]))
+            if source_record is None:
+                return await self._clarify_missing_source(deps, "run_db_analysis_workflow", "选择的数据源不存在，请重新选择。")
+            response = deps.task_service.submit_source_analysis_async(
+                session_id=deps.session_id,
+                source=source_record,
+                objective=objective or deps.context.user_message,
             )
-            return await self._handle_task_response(deps, step_id, response, business_code, "database")
+            await deps.emit("task_queued", {"step_id": step_id, "task_id": response.task_id, "status": response.status.value})
+            return await self._handle_async_task_response(deps, step_id, response.task_id, business_code, "sql_query")
 
         @agent.tool
         async def load_latest_report(ctx: RunContext[AgentDeps]) -> str:
@@ -325,6 +354,24 @@ class AgentRuntime:
                 tool_result={"step_id": step_id, "status": "succeeded", "report_artifact_id": deps.latest_report_artifact_id},
             )
             return message
+
+        @agent.tool
+        async def cancel_task(ctx: RunContext[AgentDeps], task_id: str = "") -> str:
+            deps = ctx.deps
+            target_task_id = task_id or deps.latest_task_id or ""
+            step_id = await deps.start_tool_step("Cancel analysis task", "cancel_task", {"task_id": target_task_id})
+            if not target_task_id:
+                message = "No task id is available to cancel."
+                await deps.complete_tool_step(step_id, observation_summary={"summary": message})
+                return message
+            response = deps.task_service.cancel_task(target_task_id)
+            await deps.complete_tool_step(
+                step_id,
+                observation_summary=response.model_dump(mode="json"),
+                task_id=target_task_id,
+                tool_result={"step_id": step_id, **response.model_dump(mode="json")},
+            )
+            return response.message
 
     async def _handle_task_response(
         self,
@@ -374,6 +421,60 @@ class AgentRuntime:
             f"Report summary: {result.report.summary if result.report else 'n/a'}."
         )
 
+    async def _handle_async_task_response(
+        self,
+        deps: AgentDeps,
+        step_id: str,
+        task_id: str,
+        business_code: str,
+        source_label: str,
+    ) -> str:
+        last_status = ""
+        while True:
+            detail = await asyncio.to_thread(deps.task_service.get_task, task_id)
+            if detail is None:
+                await deps.fail_tool_step(step_id, "Background task disappeared.", task_id=task_id)
+                return "Background task disappeared."
+            status = detail.task.status.value
+            if status != last_status:
+                last_status = status
+                await deps.emit(
+                    "task_status",
+                    {"step_id": step_id, "task_id": task_id, "status": status},
+                )
+            if status in {"succeeded", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+
+        detail = await asyncio.to_thread(deps.task_service.get_task, task_id)
+        if detail is None:
+            await deps.fail_tool_step(step_id, "Background task disappeared.", task_id=task_id)
+            return "Background task disappeared."
+        if detail.task.status.value == "cancelled":
+            message = "Analysis task was cancelled."
+            await deps.fail_tool_step(step_id, message, task_id=task_id)
+            return message
+        if detail.task.status.value == "failed" or not detail.result:
+            message = detail.task.error_summary.get("message", "Analysis task failed.")
+            await deps.fail_tool_step(step_id, message, task_id=task_id)
+            return message
+
+        response = TaskResponse(
+            task_id=task_id,
+            session_id=deps.session_id,
+            status=detail.task.status,
+            result=detail.result,
+        )
+        await deps.emit(
+            "artifacts_ready",
+            {
+                "step_id": step_id,
+                "task_id": task_id,
+                "artifacts": [artifact.model_dump(mode="json") for artifact in detail.artifacts],
+            },
+        )
+        return await self._handle_task_response(deps, step_id, response, business_code, source_label)
+
     async def _fail_missing_source(self, deps: AgentDeps, tool_name: str, message: str) -> str:
         step_id = await deps.start_tool_step(
             f"Resolve source for {tool_name}",
@@ -383,7 +484,27 @@ class AgentRuntime:
         await deps.fail_tool_step(step_id, message)
         return message
 
+    async def _clarify_missing_source(self, deps: AgentDeps, tool_name: str, message: str) -> str:
+        step_id = await deps.start_tool_step(
+            f"Clarify source for {tool_name}",
+            tool_name,
+            {"source": deps.context.latest_source or "missing"},
+        )
+        await deps.complete_tool_step(
+            step_id,
+            observation_summary={"summary": message, "state": "clarification_required"},
+            tool_result={"step_id": step_id, "status": "clarification_required", "message": message},
+        )
+        return message
+
     async def _run_with_fallback(self, request_content: str, deps: AgentDeps, event_handler) -> Any:
+        if deps.mode == "fake" and self.fallback_agent is not None:
+            deps.active_mode = "fake"
+            return await self.fallback_agent.run(
+                request_content,
+                deps=deps,
+                event_stream_handler=event_handler,
+            )
         try:
             return await self.agent.run(
                 request_content,
@@ -429,14 +550,19 @@ class AgentRuntime:
 
         request_content = run.metadata.get("request_content", run.goal)
         request_source_id = run.metadata.get("source_id")
+        requested_mode = run.metadata.get("requested_model_mode", self.mode)
+        if requested_mode not in {"fake", "llm"}:
+            requested_mode = self.mode
+        if requested_mode == "llm" and self.mode == "fake":
+            requested_mode = "fake"
         self.session_repository.update_run(
             run_id,
             AgentRunStatus.RUNNING,
             summary="Run started.",
             metadata={
                 "state": "running",
-                "model_mode_requested": self.mode,
-                "model_mode_used": self.mode,
+                "model_mode_requested": requested_mode,
+                "model_mode_used": requested_mode,
                 "used_fallback": False,
             },
         )
@@ -449,8 +575,8 @@ class AgentRuntime:
             session_repository=self.session_repository,
             context=context,
             queue=queue,
-            mode=self.mode,
-            active_mode=self.mode,
+            mode=requested_mode,
+            active_mode=requested_mode,
             latest_report_text=context.latest_report_text,
             latest_report_artifact_id=context.latest_report_artifact_id,
         )
@@ -482,7 +608,7 @@ class AgentRuntime:
             run_id,
             {
                 "goal": request_content,
-                "intent_mode": self.mode,
+                "intent_mode": requested_mode,
                 "source_id": request_source_id,
                 "debug": debug_metadata,
             },

@@ -1,16 +1,16 @@
 # pr_agents
 
-`pr_agents` 是一个面向 Agent 的数据分析平台骨架，用于承接原 QT 数据可视化与分析工具的能力改造。
+`pr_agents` 是一个 Agent 驱动的数据分析工作台骨架，用于把原 QT 数据可视化与分析工具改造成可被自然语言调用、可追踪、可替换业务适配器的平台能力。
 
-当前版本已经收敛到第一阶段的 `ReAct` 单 Agent 模式：
+当前版本是第一阶段完整雏形：
 
-- 六层分层：`WebUI -> Agent Orchestration -> Tool -> Workflow -> Service -> Infrastructure`
-- 单一 `AgentRuntime` 作为 Agent 主入口
-- React 工作台作为正式用户入口
-- 会话级 source 注册，替代 runtime 内置 demo 输入
-- `fake / llm` 双模与运行时 fallback
-- FastAPI + SQLite 持久化任务、运行轨迹、source 和产物
-- stub `Service` 保证在无 QT 源码时可跑通闭环
+- 产品形态：科研实验室风格的 React 数据分析工作台
+- Agent：单一 PydanticAI `ReAct` Agent，默认 `fake` 模式，可配置 `llm`
+- 数据源：真实 CSV 上传、SQL 表单注册、显式 demo source
+- 执行：后台异步任务，支持 queued/running/succeeded/failed/cancelled
+- 产物：结构化报告、图表图片 SVG、表格 artifact
+- 持久化：SQLite 存 session/source/run/task/artifact 元数据，本地文件存上传和产物
+- 业务：stub capability 模拟 QT 解析、清洗、分析、画图、报告生成
 
 ## 快速开始
 
@@ -36,7 +36,7 @@ cd frontend && pnpm test
 cd frontend && pnpm build
 ```
 
-启动 API：
+启动 API 和已构建前端：
 
 ```bash
 uv run python main.py
@@ -48,56 +48,55 @@ uv run python main.py
 cd frontend && pnpm dev --host 0.0.0.0 --port 5173 --strictPort
 ```
 
-## Agent Runtime
+访问：
 
-当前 Agent 层采用单一 `ReAct` loop：
+- 工作台：`http://127.0.0.1:8000/`
+- 前端开发页：`http://127.0.0.1:5173/`
+- Swagger：`http://127.0.0.1:8000/docs`
 
-- `ContextManager` 负责拼装会话上下文、最近任务、最近报告和可用 source
-- `MemoryManager` 当前提供短期和中期记忆
-- 模型只允许调用白名单 workflow-level tools
-- Agent 工具只通过 `TaskApplicationService` 发起任务
-- 模型失败时，`llm` 模式会在同一 run 内回退到 `fake`
+## 架构
 
-当前白名单工具：
+实际依赖方向：
 
-- `run_file_analysis_workflow`
-- `run_db_analysis_workflow`
-- `load_latest_report`
-- `summarize_report`
+```text
+WebUI
+  -> REST API / SSE API
+  -> Application Services
+  -> Agent Runtime
+  -> Agent Tools
+  -> Use Cases / Task Service
+  -> Business Capabilities / Stub Adapters
+  -> Repositories / File Artifact Store
+```
 
-## Session Source
+关键边界：
 
-分析类消息不再隐式读取 `examples/demo_a.csv` 或固定 SQL。当前 Agent 使用会话级 source：
-
-- `file source`
-  通过 `file_name + content + source_profile` 注册
-- `database source`
-  通过 `query_name + sql + source_profile` 注册
-- `demo source`
-  通过显式 helper API 注册 `a_demo_file / a_demo_db`
-
-如果当前会话没有匹配的 source，Agent 会直接提示用户先注册 source，而不是偷偷跑 demo。
+- `AgentRuntime` 只负责 ReAct loop、tool call、事件流和模型 fallback。
+- Agent tool 是薄封装，主分析入口是 `analyze_source`。
+- `TaskApplicationService` 负责任务创建、后台执行、取消、状态和产物持久化。
+- `StubAnalysisPlatform` 模拟真实 QT 业务能力，后续可替换为真实 adapter。
+- `ContextManager` 只使用显式选择的 source；未选择 source 时返回 clarification，不偷偷使用最新源。
 
 ## WebUI
 
-当前默认用户入口是独立 `React + Vite + TypeScript` 前端工作台。
+前端不是普通聊天页，而是三栏工作台：
 
-- 根路径：`http://<机器IP>:8000/`
-- 前端开发页：`http://<机器IP>:5173/`
-- Swagger：`http://<机器IP>:8000/docs`
-- 页面结构固定为：
-  - 左侧 `Chat Panel`
-  - 右侧 `Workbench`
-  - 右侧 `Debug Drawer`
+- 左侧：CSV 上传、SQL source 注册、source 选择、fake/LLM 模式切换、取消任务
+- 中间：对话、prompt、Agent 工具步骤状态
+- 右侧：run 概览、工具时间线、metrics/table、图表图片、报告预览
 
-Quick Prompts 当前会先注册 demo source，再发送 prompt。
+用户主流程：
+
+1. 上传 CSV 或注册 SQL source。
+2. 显式选择 source。
+3. 输入“分析当前数据源，生成结构化报告和图表”。
+4. 通过 SSE 查看 Agent tool、后台任务状态和 artifact 生成。
+5. 在右侧查看报告、图表和表格结果。
 
 ## Model Mode
 
-- `fake`
-  开发与业务适配模式，默认稳定回归模式
-- `llm`
-  使用 GLM 官方 API provider 驱动 Agent 决策；若模型调用失败，会回退到 `fake`
+- `fake`：默认模式，确定性工具调用，适合测试和离线演示。
+- `llm`：使用 OpenAI-compatible GLM provider；模型失败时同一 run 自动回退到 `fake`。
 
 相关环境变量：
 
@@ -108,52 +107,38 @@ Quick Prompts 当前会先注册 demo source，再发送 prompt。
 - `PR_AGENTS_LLM_MODEL`
 - `PR_AGENTS_LLM_TIMEOUT`
 
-## Demo
+## 主要 API
 
-仓库内置两条官方 demo，默认都围绕 `A_DEMO` 展示科学绘图和报告：
+- `POST /api/v1/agent/sessions`
+- `POST /api/v1/agent/sessions/{session_id}/sources/csv-upload`
+- `POST /api/v1/agent/sessions/{session_id}/sources/database`
+- `GET /api/v1/agent/sessions/{session_id}/sources`
+- `POST /api/v1/agent/sessions/{session_id}/messages`
+- `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream`
+- `POST /api/v1/tasks/{task_id}/cancel`
+- `GET /api/v1/tasks/{task_id}`
+- `GET /api/v1/artifacts/{artifact_id}/content`
+- `GET /api/v1/artifacts/{artifact_id}/raw`
 
-- 文件主线：显式注册 `a_demo_file` source 后触发分析
-- 数据库主线：显式注册 `a_demo_db` source 后触发分析
+兼容保留：
 
-样例数据见：
-
-- [`examples/demo_a.csv`](/root/projects/pr_agents/examples/demo_a.csv)
-
-完整演示步骤见：
-
-- [`docs/demo.md`](/root/projects/pr_agents/docs/demo.md)
+- `POST /api/v1/tasks/file-analysis`
+- `POST /api/v1/tasks/db-analysis`
+- `POST /api/v1/agent/sessions/{session_id}/demo-sources/{demo_code}`
 
 ## 目录说明
 
 ```text
 src/pr_agents/
   api/               FastAPI 路由
-  application/       应用服务与执行服务
-  agent/             Agent Orchestration
-  infrastructure/    SQLite、artifact、session source 持久化
-  services/          业务能力接口与 stub 实现
-  tools/             对 Agent 暴露的工具层
-  workflows/         可靠工作流编排
-  models.py          统一数据模型
-tests/               自动化测试
-docs/                设计与说明文档
-examples/            演示样例数据
+  application/       会话、任务、执行应用服务
+  agent/             ReAct Runtime、上下文、模型 provider
+  infrastructure/    SQLite repository、本地 artifact store
+  services/          QT 业务能力接口与 stub 实现
+  tools/             workflow 工具注册
+  workflows/         解析、清洗、分析、图表、报告流程
+  models.py          统一 Pydantic 数据模型
+frontend/            React + Vite 工作台
+tests/               后端自动化测试
+docs/                架构、API、演示和测试说明
 ```
-
-## 当前 API
-
-- `POST /api/v1/tasks/file-analysis`
-- `POST /api/v1/tasks/db-analysis`
-- `GET /api/v1/tasks/{task_id}`
-- `GET /api/v1/sessions/{session_id}/tasks`
-- `GET /api/v1/artifacts/{artifact_id}`
-- `GET /api/v1/artifacts/{artifact_id}/content`
-- `GET /api/v1/artifacts/{artifact_id}/raw`
-- `POST /api/v1/agent/sessions`
-- `GET /api/v1/agent/sessions/{session_id}`
-- `POST /api/v1/agent/sessions/{session_id}/messages`
-- `POST /api/v1/agent/sessions/{session_id}/sources/file`
-- `POST /api/v1/agent/sessions/{session_id}/sources/database`
-- `GET /api/v1/agent/sessions/{session_id}/sources`
-- `POST /api/v1/agent/sessions/{session_id}/demo-sources/{demo_code}`
-- `GET /api/v1/agent/sessions/{session_id}/runs/{run_id}/stream`

@@ -1,5 +1,6 @@
 import { ChatPanel } from './components/ChatPanel'
 import { DebugDrawer } from './components/DebugDrawer'
+import { SourcePanel } from './components/SourcePanel'
 import { Workbench } from './components/Workbench'
 import { useAgentWorkspace } from './hooks/useAgentWorkspace'
 
@@ -8,6 +9,19 @@ export default function App() {
 
   return (
     <div className="app-shell" data-testid="app-shell">
+      <SourcePanel
+        sources={workspace.sources}
+        selectedSourceId={workspace.selectedSourceId}
+        modelMode={workspace.modelMode}
+        busy={workspace.busy}
+        canCancel={workspace.canCancel}
+        onSelectSource={workspace.onSelectSource}
+        onModelModeChange={workspace.onModelModeChange}
+        onUploadCsv={workspace.onUploadCsv}
+        onRegisterSql={workspace.onRegisterSql}
+        onCancelTask={workspace.onCancelTask}
+      />
+
       <ChatPanel
         messages={workspace.messages}
         liveAssistant={workspace.liveAssistant}

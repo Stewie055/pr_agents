@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createSession,
+  cancelTask,
   getArtifactRawUrl,
   getArtifactText,
   getSession,
   getTask,
   registerDemoSource,
+  registerSqlSource,
   sendMessage,
+  uploadCsvSource,
 } from '../api'
 import type {
   AgentRun,
@@ -54,6 +57,8 @@ export function useAgentWorkspace() {
   const [statusText, setStatusText] = useState('Ready.')
   const [busy, setBusy] = useState(false)
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [modelMode, setModelMode] = useState<'fake' | 'llm'>('fake')
   const [liveRun, setLiveRun] = useState<AgentRun | null>(null)
   const [liveAssistant, setLiveAssistant] = useState<LiveAssistant | null>(null)
   const [taskDetails, setTaskDetails] = useState<Record<string, TaskDetailResponse>>({})
@@ -64,6 +69,9 @@ export function useAgentWorkspace() {
   async function refreshSession(sessionId: string) {
     const data = await getSession(sessionId)
     setSession(data)
+    if (!selectedSourceId && data.sources.length > 0) {
+      setSelectedSourceId(data.sources[data.sources.length - 1].source_id)
+    }
     return data
   }
 
@@ -116,7 +124,7 @@ export function useAgentWorkspace() {
     }
     const sessionId = session?.session_id || (await ensureSession())
     const latestSourceId =
-      sourceIdOverride ?? session?.sources[session.sources.length - 1]?.source_id ?? null
+      sourceIdOverride ?? selectedSourceId ?? null
     setBusy(true)
     setStatusText('Submitting prompt...')
     setPrompt('')
@@ -125,7 +133,7 @@ export function useAgentWorkspace() {
     closeStream()
 
     try {
-      const start = await sendMessage(sessionId, trimmed, latestSourceId)
+      const start = await sendMessage(sessionId, trimmed, latestSourceId, modelMode)
       setActiveRunId(start.run_id)
 
       const stream = new EventSource(start.stream_url)
@@ -225,6 +233,25 @@ export function useAgentWorkspace() {
           void fetchTaskArtifacts(taskId, sessionId)
         }
         setStatusText('Tool returned.')
+      })
+
+      stream.addEventListener('task_queued', (event) => {
+        const payload = JSON.parse(event.data) as AgentStreamEnvelope
+        setStatusText(`Task ${String(payload.data.task_id || '')} queued.`)
+      })
+
+      stream.addEventListener('task_status', (event) => {
+        const payload = JSON.parse(event.data) as AgentStreamEnvelope
+        setStatusText(`Task ${String(payload.data.status || 'running')}.`)
+      })
+
+      stream.addEventListener('artifacts_ready', (event) => {
+        const payload = JSON.parse(event.data) as AgentStreamEnvelope
+        const taskId = payload.data.task_id as string | undefined
+        if (taskId) {
+          void fetchTaskArtifacts(taskId, sessionId)
+        }
+        setStatusText('Artifacts ready.')
       })
 
       stream.addEventListener('step_completed', (event) => {
@@ -358,6 +385,9 @@ export function useAgentWorkspace() {
       await registerDemoSource(sessionId, item.demoCode)
       const refreshed = await refreshSession(sessionId)
       const latestSource = refreshed.sources[refreshed.sources.length - 1] || null
+      if (latestSource) {
+        setSelectedSourceId(latestSource.source_id)
+      }
       setBusy(false)
       await handleSend(nextPrompt, latestSource?.source_id || null)
     } catch (error) {
@@ -378,6 +408,9 @@ export function useAgentWorkspace() {
 
   const currentTaskId = getLatestTaskId(activeRun)
   const currentTaskDetail = currentTaskId ? taskDetails[currentTaskId] || null : null
+  const canCancel =
+    Boolean(currentTaskId) &&
+    ['queued', 'running', 'pending'].includes(currentTaskDetail?.task.status || '')
   const currentChartId = currentTaskDetail?.result?.chart?.artifact?.artifact_id || null
   const currentReportPreview =
     (currentTaskId && reportPreview[currentTaskId]) || currentTaskDetail?.result?.report?.summary || ''
@@ -390,6 +423,53 @@ export function useAgentWorkspace() {
     }
   }, [currentTaskId, session?.session_id, taskDetails])
 
+  async function handleUploadCsv(file: File) {
+    const sessionId = session?.session_id || (await ensureSession())
+    setBusy(true)
+    setStatusText('Uploading CSV source...')
+    try {
+      const response = await uploadCsvSource(sessionId, file)
+      setSelectedSourceId(response.source.source_id)
+      await refreshSession(sessionId)
+      setStatusText(`CSV uploaded: ${response.row_count} rows.`)
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : 'CSV upload failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRegisterSql(queryName: string, sql: string) {
+    const sessionId = session?.session_id || (await ensureSession())
+    setBusy(true)
+    setStatusText('Registering SQL source...')
+    try {
+      const source = await registerSqlSource(sessionId, queryName, sql)
+      setSelectedSourceId(source.source_id)
+      await refreshSession(sessionId)
+      setStatusText(`SQL source registered: ${source.name}.`)
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : 'SQL registration failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleCancelTask() {
+    const taskId = currentTaskId
+    if (!taskId) return
+    setStatusText('Requesting cancellation...')
+    try {
+      const response = await cancelTask(taskId)
+      setStatusText(response.message)
+      if (session?.session_id) {
+        await fetchTaskArtifacts(taskId, session.session_id)
+      }
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : 'Cancellation failed.')
+    }
+  }
+
   return {
     busy,
     debugOpen,
@@ -400,14 +480,23 @@ export function useAgentWorkspace() {
     reportPreview: currentReportPreview,
     run: activeRun,
     sessionId: session?.session_id || null,
+    sources: session?.sources || [],
+    selectedSourceId,
+    modelMode,
     statusText,
     taskDetail: currentTaskDetail,
+    canCancel,
     toolSteps,
     chartUrl: currentChartId ? getArtifactRawUrl(currentChartId) : null,
     promptSnapshot: activeRun?.metadata?.prompt_snapshot || {},
     memorySnapshot: activeRun?.metadata?.memory_snapshot || {},
     runMetadata: activeRun?.metadata || {},
     onPromptChange: setPrompt,
+    onSelectSource: setSelectedSourceId,
+    onModelModeChange: setModelMode,
+    onUploadCsv: (file: File) => void handleUploadCsv(file),
+    onRegisterSql: (queryName: string, sql: string) => void handleRegisterSql(queryName, sql),
+    onCancelTask: () => void handleCancelTask(),
     onQuickPrompt: (item: QuickPrompt) => void handleQuickPrompt(item),
     onSend: () => void handleSend(prompt),
     toggleDebug: () => setDebugOpen((current) => !current),

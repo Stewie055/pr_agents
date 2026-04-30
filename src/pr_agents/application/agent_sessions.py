@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +25,7 @@ from pr_agents.models import (
     RegisterFileSourceRequest,
     MessageRole,
     MessageType,
+    UploadedFileSourceResponse,
 )
 
 
@@ -34,11 +36,13 @@ class AgentSessionService:
         task_service: TaskApplicationService,
         runtime: AgentRuntime,
         demo_data_path: str,
+        upload_dir: str = "artifacts/uploads",
     ) -> None:
         self.session_repository = session_repository
         self.task_service = task_service
         self.runtime = runtime
         self.demo_data_path = Path(demo_data_path)
+        self.upload_dir = Path(upload_dir)
 
     @property
     def intent_mode(self) -> str:
@@ -80,6 +84,7 @@ class AgentSessionService:
             metadata={
                 "request_content": request.content,
                 "source_id": request.source_id,
+                "requested_model_mode": request.model_mode.value if request.model_mode else self.intent_mode,
                 "message_id": message.message_id,
                 "state": "queued",
             },
@@ -180,11 +185,7 @@ class AgentSessionService:
             intent_mode=run.intent_mode,
             metadata={
                 "request_content": run.metadata.get("request_content", run.goal),
-                "source_id": self._ensure_rerun_source_id(
-                    session_id,
-                    run.goal,
-                    run.metadata.get("source_id"),
-                ),
+                "source_id": run.metadata.get("source_id"),
                 "rerun_source_run_id": run_id,
                 "rerun_source_step_id": request.step_id,
                 "rerun_note": request.note,
@@ -238,20 +239,61 @@ class AgentSessionService:
         self.session_repository.create_session(session_id)
         return self.session_repository.register_source(
             session_id=session_id,
-            source_type=AgentSourceType.FILE,
+            source_type=AgentSourceType.CSV_FILE,
             name=request.file_name,
             payload={"file_name": request.file_name, "content": request.content},
-            metadata={"source_profile": request.source_profile},
+            metadata={
+                "business_code": request.business_code,
+                "schema_summary": self._profile_csv(request.content),
+                "source_profile": request.source_profile,
+            },
+        )
+
+    def register_uploaded_csv_source(
+        self,
+        session_id: str,
+        *,
+        file_name: str,
+        content: bytes,
+        business_code: str = "file_analysis",
+    ) -> UploadedFileSourceResponse:
+        self.session_repository.create_session(session_id)
+        decoded = content.decode("utf-8-sig")
+        profile = self._profile_csv(decoded)
+        target_dir = self.upload_dir / session_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(file_name).name or "upload.csv"
+        storage_path = target_dir / f"{uuid4().hex[:8]}_{safe_name}"
+        storage_path.write_text(decoded, encoding="utf-8")
+        source = self.session_repository.register_source(
+            session_id=session_id,
+            source_type=AgentSourceType.CSV_FILE,
+            name=safe_name,
+            payload={"file_name": safe_name, "storage_ref": str(storage_path)},
+            metadata={
+                "business_code": business_code,
+                "schema_summary": profile,
+                "source_profile": {"source_pattern": "per_business_file", "upload": True},
+            },
+        )
+        return UploadedFileSourceResponse(
+            source=source,
+            row_count=int(profile.get("row_count", 0)),
+            columns=list(profile.get("columns", [])),
         )
 
     def register_database_source(self, session_id: str, request: RegisterDatabaseSourceRequest) -> AgentSourceRecord:
         self.session_repository.create_session(session_id)
         return self.session_repository.register_source(
             session_id=session_id,
-            source_type=AgentSourceType.DATABASE,
+            source_type=AgentSourceType.SQL_QUERY,
             name=request.query_name,
             payload={"query_name": request.query_name, "sql": request.sql},
-            metadata={"source_profile": request.source_profile},
+            metadata={
+                "business_code": request.business_code,
+                "schema_summary": {"query_name": request.query_name, "sql_preview": request.sql[:120]},
+                "source_profile": request.source_profile,
+            },
         )
 
     def list_sources(self, session_id: str) -> list[AgentSourceRecord]:
@@ -263,29 +305,48 @@ class AgentSessionService:
         if demo_code == "a_demo_file":
             return self.session_repository.register_source(
                 session_id=session_id,
-                source_type=AgentSourceType.FILE,
+                source_type=AgentSourceType.CSV_FILE,
                 name=self.demo_data_path.name,
                 payload={
                     "file_name": self.demo_data_path.name,
                     "content": self.demo_data_path.read_text(encoding="utf-8"),
                 },
-                metadata={"demo_code": demo_code, "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"}},
+                metadata={
+                    "demo_code": demo_code,
+                    "business_code": "file_analysis",
+                    "schema_summary": self._profile_csv(self.demo_data_path.read_text(encoding="utf-8")),
+                    "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"},
+                },
             )
         if demo_code == "a_demo_db":
             return self.session_repository.register_source(
                 session_id=session_id,
-                source_type=AgentSourceType.DATABASE,
+                source_type=AgentSourceType.SQL_QUERY,
                 name="demo_query",
                 payload={"query_name": "demo_query", "sql": "select * from cleaned_demo_data"},
-                metadata={"demo_code": demo_code, "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"}},
+                metadata={
+                    "demo_code": demo_code,
+                    "business_code": "db_analysis",
+                    "schema_summary": {"query_name": "demo_query", "sql_preview": "select * from cleaned_demo_data"},
+                    "source_profile": {"source_pattern": "per_business_file", "data_version": "demo-v1"},
+                },
             )
         raise ValueError(f"unknown demo code: {demo_code}")
 
     def _ensure_rerun_source_id(self, session_id: str, run_goal: str, source_id: str | None) -> str | None:
         if source_id:
             return source_id
-        demo_code = "a_demo_db" if ("database" in run_goal.lower() or "数据库" in run_goal) else "a_demo_file"
-        return self.register_demo_source(session_id, demo_code).source_id
+        return None
+
+    @staticmethod
+    def _profile_csv(content: str) -> dict:
+        rows = list(csv.reader(line for line in content.splitlines() if line.strip()))
+        columns = rows[0] if rows else []
+        return {
+            "columns": columns,
+            "row_count": max(len(rows) - 1, 0),
+            "preview_rows": rows[1:4],
+        }
 
     @staticmethod
     def _format_event(event) -> str:

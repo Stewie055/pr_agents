@@ -66,7 +66,7 @@ def test_memory_manager_collects_latest_report_summary(tmp_path: Path) -> None:
     asyncio.run(collect())
     memory = MemoryManager(agent_session_service.session_repository, task_service).snapshot(session_id)
 
-    assert memory.mid_term.latest_task_summary["business_code"] == "A_DEMO"
+    assert memory.mid_term.latest_task_summary["business_code"] == "file_analysis"
     assert memory.mid_term.latest_report_summary.startswith("Analysis completed")
 
 
@@ -109,7 +109,7 @@ def test_agent_runtime_guides_when_source_is_missing(tmp_path: Path) -> None:
     events = asyncio.run(collect())
     final_event = next(event for event in events if event.event == "assistant_completed")
 
-    assert "Register a file source" in final_event.data["message"]
+    assert "CSV 数据源" in final_event.data["message"]
 
 
 def test_agent_runtime_falls_back_to_fake_when_model_execution_fails(tmp_path: Path) -> None:

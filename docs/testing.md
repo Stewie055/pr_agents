@@ -7,12 +7,14 @@
 - Tool 调用
 - `AnalysisExecutionService` 与 `TaskApplicationService` 执行链路
 - API 提交、查询、artifact 读取
+- CSV multipart 上传 source 和 schema profiling
+- 后台异步任务状态与 queued 任务取消
 - SQLite 持久化与失败状态流转
 - session source 注册、查询与 demo source 注入
 - `ReAct` 单 Agent 的 workflow-level 工具决策
-- 无 source 引导、多轮追问、报告重看与报告摘要
+- 无 source clarification、多轮追问、报告重看与报告摘要
 - `llm` 运行时模型失败回退到 `fake`
-- SSE 事件流与 session 最终一致性
+- SSE 事件流、task queued/status/artifacts ready 与 session 最终一致性
 - React 组件渲染与前端构建
 
 ## 运行

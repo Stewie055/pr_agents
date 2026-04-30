@@ -1,12 +1,12 @@
-export type TaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type TaskStatus = 'pending' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 export type AgentRunStatus = 'planned' | 'running' | 'succeeded' | 'failed'
 export type AgentStepStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 export type MessageRole = 'user' | 'assistant' | 'tool'
-export type AgentSourceType = 'file' | 'database'
+export type AgentSourceType = 'file' | 'database' | 'csv_file' | 'sql_query'
 
 export interface ArtifactRef {
   artifact_id: string
-  artifact_type: 'dataset' | 'chart' | 'report'
+  artifact_type: 'dataset' | 'chart' | 'chart_image' | 'table' | 'report'
   uri: string
   metadata: Record<string, unknown>
 }
@@ -76,7 +76,7 @@ export interface TaskRecord {
 export interface ArtifactRecord {
   artifact_id: string
   task_id: string
-  artifact_type: 'dataset' | 'chart' | 'report'
+  artifact_type: 'dataset' | 'chart' | 'chart_image' | 'table' | 'report'
   uri: string
   filename: string
   metadata: Record<string, unknown>
@@ -151,6 +151,12 @@ export interface AgentMessageStartResponse {
   run_id: string
   message_id: string
   stream_url: string
+}
+
+export interface UploadedFileSourceResponse {
+  source: AgentSourceRecord
+  row_count: number
+  columns: string[]
 }
 
 export interface AgentStreamEnvelope {

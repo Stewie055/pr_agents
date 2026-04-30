@@ -21,14 +21,18 @@ class SourcePattern(str, Enum):
 class ArtifactType(str, Enum):
     DATASET = "dataset"
     CHART = "chart"
+    CHART_IMAGE = "chart_image"
+    TABLE = "table"
     REPORT = "report"
 
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class AgentRunStatus(str, Enum):
@@ -91,8 +95,16 @@ class LLMProviderName(str, Enum):
 
 
 class AgentSourceType(str, Enum):
-    FILE = "file"
-    DATABASE = "database"
+    CSV_FILE = "csv_file"
+    SQL_QUERY = "sql_query"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if value == "file":
+            return cls.CSV_FILE
+        if value == "database":
+            return cls.SQL_QUERY
+        return None
 
 
 class TaskContext(BaseModel):
@@ -368,18 +380,34 @@ class CreateAgentSessionResponse(BaseModel):
 class AgentUserMessageRequest(BaseModel):
     content: str
     source_id: str | None = None
+    model_mode: IntentMode | None = None
 
 
 class RegisterFileSourceRequest(BaseModel):
     file_name: str
     content: str
+    business_code: str = "file_analysis"
     source_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class RegisterDatabaseSourceRequest(BaseModel):
     query_name: str
     sql: str
+    business_code: str = "db_analysis"
     source_profile: dict[str, Any] = Field(default_factory=dict)
+
+
+class UploadedFileSourceResponse(BaseModel):
+    source: AgentSourceRecord
+    row_count: int
+    columns: list[str] = Field(default_factory=list)
+
+
+class CancelTaskResponse(BaseModel):
+    task_id: str
+    status: TaskStatus
+    cancelled: bool
+    message: str
 
 
 class AgentMessageStartResponse(BaseModel):
