@@ -1,0 +1,81 @@
+export type DiagnosticCase = {
+  id: string;
+  title: string;
+  equipment_type: string;
+  status: string;
+};
+
+export type AgentMessage = {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+};
+
+export type Artifact = {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  data: Record<string, unknown>;
+};
+
+export type ToolTrace = {
+  id: string;
+  tool_name: string;
+  status: string;
+  result_summary: string;
+};
+
+export type CaseSnapshot = {
+  case: DiagnosticCase;
+  datasets: Array<{ id: string; filename: string }>;
+  messages: AgentMessage[];
+  artifacts: Artifact[];
+  tool_traces: ToolTrace[];
+};
+
+const jsonHeaders = { "Content-Type": "application/json" };
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function createCase(title: string): Promise<DiagnosticCase> {
+  const response = await fetch("/api/cases", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ title })
+  });
+  return parseResponse<DiagnosticCase>(response);
+}
+
+export async function getCase(caseId: string): Promise<CaseSnapshot> {
+  const response = await fetch(`/api/cases/${caseId}`);
+  return parseResponse<CaseSnapshot>(response);
+}
+
+export async function uploadDataset(caseId: string, file: File): Promise<{ id: string; filename: string }> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`/api/cases/${caseId}/files`, {
+    method: "POST",
+    body
+  });
+  return parseResponse<{ id: string; filename: string }>(response);
+}
+
+export async function sendMessage(caseId: string, content: string, datasetId?: string) {
+  const response = await fetch(`/api/cases/${caseId}/messages`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ content, dataset_id: datasetId })
+  });
+  return parseResponse<{
+    message: AgentMessage;
+    artifacts: Artifact[];
+    tool_traces: ToolTrace[];
+  }>(response);
+}
