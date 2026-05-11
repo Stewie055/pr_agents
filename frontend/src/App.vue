@@ -9,8 +9,41 @@ const error = ref("");
 const snapshot = ref<CaseSnapshot | null>(null);
 
 const activeDatasetId = computed(() => snapshot.value?.datasets.at(-1)?.id);
+const latestDatasetName = computed(() => snapshot.value?.datasets.at(-1)?.filename);
+const hasDataset = computed(() => Boolean(activeDatasetId.value));
 const artifacts = computed<Artifact[]>(() => snapshot.value?.artifacts ?? []);
 const report = computed(() => artifacts.value.find((item) => item.kind === "report"));
+const sendButtonText = computed(() => (loading.value ? (hasDataset.value ? "正在分析..." : "正在回复...") : hasDataset.value ? "发送并分析" : "发送"));
+const caseStateText = computed(() => {
+  if (!snapshot.value) {
+    return "尚未创建案例";
+  }
+  if (hasDataset.value) {
+    return `数据已就绪：${latestDatasetName.value}`;
+  }
+  return "等待上传设备性能 CSV";
+});
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderMarkdown(value: string) {
+  let html = escapeHtml(value);
+  html = html.replace(/^### (.*)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^## (.*)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^# (.*)$/gm, "<h2>$1</h2>");
+  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/^- (.*)$/gm, "<li>$1</li>");
+  html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
+  return html.replace(/\n/g, "<br />");
+}
 
 async function ensureCase() {
   if (snapshot.value) {
@@ -95,7 +128,7 @@ async function handleSend() {
       <section v-if="snapshot" class="case-meta">
         <strong>{{ snapshot.case.title }}</strong>
         <span>{{ snapshot.case.equipment_type }}</span>
-        <span>{{ snapshot.datasets.length }} 个数据集</span>
+        <span>{{ caseStateText }}</span>
       </section>
     </aside>
 
@@ -103,18 +136,19 @@ async function handleSend() {
       <header>
         <p class="eyebrow">Agent</p>
         <h2>辅助诊断对话</h2>
+        <p class="state-line">{{ caseStateText }}</p>
       </header>
 
       <div class="messages">
         <article v-for="item in snapshot?.messages ?? []" :key="item.id" :class="['message', item.role]">
           <strong>{{ item.role }}</strong>
-          <p>{{ item.content }}</p>
+          <div class="message-content" v-html="renderMarkdown(item.content)" />
         </article>
       </div>
 
       <div class="composer">
         <textarea v-model="message" rows="4" />
-        <button :disabled="loading" @click="handleSend">发送并诊断</button>
+        <button :disabled="loading" @click="handleSend">{{ sendButtonText }}</button>
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>

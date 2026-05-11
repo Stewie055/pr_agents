@@ -2,6 +2,7 @@
 
 from semidiag.domain.models import (
     AgentMessage,
+    AgentStepTrace,
     AnalysisArtifact,
     AuditEvent,
     DatasetRecord,
@@ -14,6 +15,7 @@ from semidiag.domain.models import (
 
 __all__ = [
     "AgentMessage",
+    "AgentStepTrace",
     "AnalysisArtifact",
     "AuditEvent",
     "DatasetRecord",

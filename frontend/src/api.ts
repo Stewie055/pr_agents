@@ -9,6 +9,7 @@ export type AgentMessage = {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type Artifact = {
@@ -26,19 +27,36 @@ export type ToolTrace = {
   result_summary: string;
 };
 
+export type AgentStep = {
+  id: string;
+  step_index: number;
+  phase: string;
+  stop_reason?: string | null;
+};
+
 export type CaseSnapshot = {
   case: DiagnosticCase;
   datasets: Array<{ id: string; filename: string }>;
   messages: AgentMessage[];
   artifacts: Artifact[];
   tool_traces: ToolTrace[];
+  agent_steps?: AgentStep[];
 };
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (typeof payload.detail === "string") {
+        detail = payload.detail;
+      }
+    } catch {
+      // Keep the status fallback when the response is not JSON.
+    }
+    throw new Error(detail);
   }
   return response.json() as Promise<T>;
 }

@@ -9,6 +9,12 @@
 - 以诊断案例为核心工作单元，聚合数据、对话、证据、结论、报告和审计。
 - 支持设备类型诊断插件包，包括解析器、指标定义、规则、模型、工具、报告模板和知识索引配置。
 - Agent 提供辅助诊断能力，输出可能原因、置信度、风险等级、证据链和建议动作。
+- Agent 必须先通过 LLM Router/Triage 理解用户意图，支持聊天、资料问答、数据分析、诊断、报告和 Workflow 请求等路径。
+- 系统本地 State Gate 只负责确定性约束，例如是否已有数据集、工具是否可用、是否需要审批。
+- 分析、诊断、报告路径必须使用 ReAct/Graph 执行模型，允许多轮工具调用、观察和继续推理。
+- Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
+- 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
+- 用户可见回复默认不暴露内部 case/dataset/artifact id。
 - 高风险动作必须有人确认，包括代码执行、数据写入、Workflow 发布、正式报告发布和处置建议确认。
 - Workflow 是核心能力，支持从一次诊断沉淀为可复用流程，并支持批处理和定时报告。
 - LLM 内网/本地优先，敏感设备数据默认不出内网。
@@ -32,6 +38,8 @@
 - Stub LLM provider。
 - OpenAI-compatible LLM provider。
 - LLM prompt/request/response audit。
+- LLM Router/Triage and deterministic State Gate。
+- ReAct multi-step tool loop and AgentStepTrace。
 - Agent runtime and Tool Registry。
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.

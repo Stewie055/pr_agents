@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
 from semidiag.agent.memory import MemoryService
-from semidiag.domain import AgentMessage, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
+from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, StateGate
+from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import GenericEquipmentPlugin
 from semidiag.tools import ToolContext, ToolRegistry, build_default_registry
@@ -20,7 +23,23 @@ class AgentTurnResult:
     summary: str
 
 
+@dataclass
+class AgentState:
+    case_id: str
+    user_content: str
+    active_dataset_id: str | None
+    decision: RouteDecision
+    actor: str
+    messages: list[dict[str, Any]]
+    observations: list[dict[str, Any]]
+    step_count: int = 0
+    stop_reason: str | None = None
+
+
 class AgentRuntime:
+    max_steps = 6
+    max_repeated_tool_calls = 2
+
     def __init__(
         self,
         repository: SQLiteRepository,
@@ -33,6 +52,8 @@ class AgentRuntime:
         self.llm = llm or StubLLMProvider()
         self.memory = memory or MemoryService()
         self.plugin = GenericEquipmentPlugin()
+        self.router = LLMRouter(self.llm)
+        self.state_gate = StateGate()
 
     def handle_user_message(
         self,
@@ -49,82 +70,244 @@ class AgentRuntime:
 
         datasets = self.repository.list_case_datasets(case_id)
         active_dataset_id = dataset_id or (datasets[-1].id if datasets else None)
+        route_context = self._build_route_context(case_id=case_id)
+        decision = self.router.route(user_content=content, context=route_context)
+        gate = self.state_gate.check(decision=decision, context=route_context)
+        if not gate.allowed:
+            return self._local_reply(
+                case_id=case_id,
+                content=gate.message or "当前状态不满足执行条件。",
+                decision=decision,
+                llm_used=not isinstance(self.llm, StubLLMProvider),
+                blocked_by_state_gate=True,
+            )
+
         if isinstance(self.llm, StubLLMProvider):
             return self._handle_stub_turn(
                 case_id=case_id,
                 content=content,
                 active_dataset_id=active_dataset_id,
                 actor=actor,
+                decision=decision,
             )
 
-        context = ToolContext(
+        if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
+            return self._handle_non_tool_llm_turn(case_id=case_id, content=content, decision=decision)
+
+        messages = self._build_llm_messages(
             case_id=case_id,
-            actor=actor,
+            user_content=content,
+            active_dataset_id=active_dataset_id,
+            decision=decision,
+        )
+        return self._run_react_loop(
+            AgentState(
+                case_id=case_id,
+                user_content=content,
+                active_dataset_id=active_dataset_id,
+                decision=decision,
+                actor=actor,
+                messages=messages,
+                observations=[],
+            )
+        )
+
+    def _run_react_loop(self, state: AgentState) -> AgentTurnResult:
+        context = ToolContext(
+            case_id=state.case_id,
+            actor=state.actor,
             repository=self.repository,
             plugin=self.plugin,
         )
-        messages = self._build_llm_messages(case_id=case_id, user_content=content, active_dataset_id=active_dataset_id)
         tools = self.registry.openai_tools()
-        plan_result = self._call_llm_for_plan(case_id=case_id, messages=messages, tools=tools)
-        if not plan_result.tool_calls:
-            raise LLMError("LLM did not return any tool calls for this diagnostic request", status_code=502)
+        call_counts: dict[str, int] = {}
+        final_content: str | None = None
 
-        tool_messages: list[dict[str, Any]] = []
-        for call in plan_result.tool_calls:
-            if self.registry.get_tool(call.name) is None:
-                raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
-            arguments = dict(call.arguments)
-            if call.name in {"parse_dataset", "profile_dataset", "build_trend_chart"}:
-                arguments["dataset_id"] = active_dataset_id
-            result = self.registry.run(call.name, context, arguments)
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.name,
-                    "content": result.summary,
-                }
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=0,
+            phase="route",
+            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
+        )
+
+        for step_index in range(1, self.max_steps + 1):
+            state.step_count = step_index
+            started = perf_counter()
+            result = self._call_llm_for_plan(case_id=state.case_id, messages=state.messages, tools=tools)
+            duration_ms = int((perf_counter() - started) * 1000)
+
+            if not result.tool_calls:
+                final_content = result.content
+                state.stop_reason = "final_answer"
+                self._record_agent_step(
+                    case_id=state.case_id,
+                    step_index=step_index,
+                    phase="finalize",
+                    llm_metadata=result.metadata,
+                    stop_reason=state.stop_reason,
+                    duration_ms=duration_ms,
+                )
+                break
+
+            assistant_tool_message = self._assistant_tool_message(result)
+            state.messages.append(assistant_tool_message)
+            tool_observations: list[dict[str, Any]] = []
+            tool_messages: list[dict[str, Any]] = []
+
+            for call in result.tool_calls:
+                if self.registry.get_tool(call.name) is None:
+                    raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
+                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
+                call_counts[signature] = call_counts.get(signature, 0) + 1
+                if call_counts[signature] > self.max_repeated_tool_calls:
+                    state.stop_reason = "repeated_tool_call"
+                    final_content = (
+                        "我检测到模型在重复调用同一个工具，已停止继续执行。"
+                        "目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
+                    )
+                    break
+
+                arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
+                try:
+                    tool_result = self.registry.run(call.name, context, arguments)
+                    observation = self._tool_result_observation(call.name, tool_result)
+                except Exception as exc:
+                    observation = {
+                        "tool_name": call.name,
+                        "summary": f"Tool {call.name} failed: {exc}",
+                        "error": str(exc),
+                        "data": {},
+                        "artifact_ids": [],
+                        "evidence_ids": [],
+                        "next_suggestions": self._recovery_suggestions(call.name),
+                    }
+                tool_observations.append(observation)
+                state.observations.append(observation)
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "content": json.dumps(observation, ensure_ascii=False),
+                    }
+                )
+
+            self._record_agent_step(
+                case_id=state.case_id,
+                step_index=step_index,
+                phase="observe",
+                tool_calls=[
+                    {"id": call.id, "name": call.name, "arguments": call.arguments}
+                    for call in result.tool_calls
+                ],
+                observations=tool_observations,
+                llm_metadata=result.metadata,
+                stop_reason=state.stop_reason,
+                duration_ms=duration_ms,
             )
 
-        assistant_tool_message = {
+            state.messages.extend(tool_messages)
+            if final_content:
+                break
+
+        if final_content is None:
+            state.stop_reason = state.stop_reason or "max_steps"
+            final_content = self._finalize_from_observations(state)
+
+        content_out = self._sanitize_user_visible_text(final_content)
+        artifacts = self.repository.list_case_artifacts(state.case_id)
+        tool_traces = self.repository.list_case_tool_traces(state.case_id)
+        assistant_message = self.repository.add_message(
+            AgentMessage(
+                case_id=state.case_id,
+                role="assistant",
+                content=content_out,
+                metadata=self._message_metadata(
+                    decision=state.decision,
+                    tool_count=len(tool_traces),
+                    artifact_count=len(artifacts),
+                    llm_used=True,
+                    step_count=state.step_count,
+                    stop_reason=state.stop_reason,
+                ),
+            )
+        )
+        self.memory.update_midterm(state.case_id, content_out[:500])
+        return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=content_out)
+
+    def _assistant_tool_message(self, result) -> dict[str, Any]:
+        message = {
             "role": "assistant",
-            "content": plan_result.content or "",
+            "content": result.content or "",
             "tool_calls": [
                 {
                     "id": call.id,
                     "type": "function",
                     "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
                 }
-                for call in plan_result.tool_calls
+                for call in result.tool_calls
             ],
         }
-        summarize_messages = messages + [assistant_tool_message] + tool_messages
-        final_result = self._call_llm_for_summary(case_id=case_id, messages=summarize_messages)
-        content_out = final_result.content or "已完成工具调用，但模型没有生成最终回答。"
+        if "reasoning_content" in result.metadata:
+            message["reasoning_content"] = result.metadata["reasoning_content"]
+        return message
 
-        artifacts = self.repository.list_case_artifacts(case_id)
-        tool_traces = self.repository.list_case_tool_traces(case_id)
+    def _prepare_tool_arguments(self, tool_name: str, arguments: dict[str, Any], active_dataset_id: str | None) -> dict[str, Any]:
+        prepared = dict(arguments)
+        if tool_name in {"parse_dataset", "inspect_dataset", "profile_dataset", "build_trend_chart"}:
+            prepared["dataset_id"] = active_dataset_id
+        return prepared
 
-        assistant_message = self.repository.add_message(
-            AgentMessage(
-                case_id=case_id,
-                role="assistant",
-                content=content_out,
-                metadata={
-                    "tool_count": len(plan_result.tool_calls),
-                    "artifact_count": len(artifacts),
-                    "llm_provider": self.llm.provider_name,
-                    "llm_model": self.llm.model,
-                },
-            )
+    def _tool_result_observation(self, tool_name: str, tool_result) -> dict[str, Any]:
+        observation = tool_result.observation
+        if observation is None:
+            return {
+                "tool_name": tool_name,
+                "summary": tool_result.summary,
+                "data": tool_result.payload,
+                "artifact_ids": [artifact.id for artifact in tool_result.artifacts],
+                "evidence_ids": [evidence.id for evidence in tool_result.evidence],
+                "next_suggestions": [],
+            }
+        return {
+            "tool_name": observation.tool_name,
+            "summary": observation.summary,
+            "data": observation.data,
+            "artifact_ids": observation.artifact_ids,
+            "evidence_ids": observation.evidence_ids,
+            "next_suggestions": observation.next_suggestions,
+        }
+
+    def _recovery_suggestions(self, tool_name: str) -> list[str]:
+        if tool_name == "diagnose_performance":
+            return ["profile_dataset", "build_trend_chart"]
+        if tool_name in {"profile_dataset", "build_trend_chart"}:
+            return ["inspect_dataset", "parse_dataset"]
+        return ["inspect_dataset"]
+
+    def _finalize_from_observations(self, state: AgentState) -> str:
+        messages = list(state.messages)
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "已经达到本轮 Agent 最大工具步数。请只基于已有 observations 生成最终中文回复。"
+                    "不要输出任何 tool_calls、function call、DSML、XML、JSON 调用标记。"
+                    "说明已完成哪些分析、仍缺哪些数据，以及建议下一步。"
+                    f"Observations JSON: {json.dumps(state.observations, ensure_ascii=False)}"
+                ),
+            }
         )
-        self.memory.update_midterm(case_id, content_out[:500])
-        return AgentTurnResult(
-            message=assistant_message,
-            artifacts=artifacts,
-            tool_traces=tool_traces,
-            summary=content_out,
+        result = self._call_llm_for_summary(case_id=state.case_id, messages=messages)
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=state.step_count,
+            phase="stop",
+            observations=state.observations[-3:],
+            llm_metadata=result.metadata,
+            stop_reason=state.stop_reason,
         )
+        return result.content or "已完成本轮分析，但模型未生成最终回复。请查看工具轨迹和证据结果。"
 
     def _handle_stub_turn(
         self,
@@ -133,7 +316,16 @@ class AgentRuntime:
         content: str,
         active_dataset_id: str | None,
         actor: str,
+        decision: RouteDecision,
     ) -> AgentTurnResult:
+        if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
+            return self._local_reply(
+                case_id=case_id,
+                content=self._stub_non_tool_reply(decision=decision, has_dataset=active_dataset_id is not None),
+                decision=decision,
+                llm_used=False,
+            )
+
         tool_names = self.llm.plan_tools(content, has_dataset=active_dataset_id is not None)  # type: ignore[attr-defined]
         context = ToolContext(
             case_id=case_id,
@@ -164,7 +356,12 @@ class AgentRuntime:
                 case_id=case_id,
                 role="assistant",
                 content=content_out,
-                metadata={"tool_count": len(tool_names), "artifact_count": len(artifacts), "llm_provider": "stub"},
+                metadata=self._message_metadata(
+                    decision=decision,
+                    tool_count=len(tool_names),
+                    artifact_count=len(artifacts),
+                    llm_used=False,
+                ),
             )
         )
         self.memory.update_midterm(case_id, content_out[:500])
@@ -181,6 +378,7 @@ class AgentRuntime:
         case_id: str,
         user_content: str,
         active_dataset_id: str | None,
+        decision: RouteDecision,
     ) -> list[dict[str, Any]]:
         case = self.repository.get_case(case_id)
         datasets = self.repository.list_case_datasets(case_id)
@@ -224,9 +422,14 @@ class AgentRuntime:
         }
         system_prompt = (
             "你是半导体工业设备性能诊断平台的辅助诊断 Agent。"
-            "你必须通过白名单工具分析数据，并基于 Artifact 和 Evidence 输出结论。"
+            "你正在执行 ReAct 循环：如果还需要信息，必须通过白名单工具获取；"
+            "如果已有 observations 足够回答，直接输出最终结论，不要再承诺稍后查看。"
             "不要编造没有证据支撑的根因；正式结论和处置建议需要工程师确认。"
             "不要要求访问原始文件内容；上下文只提供摘要和元数据。"
+            "可以使用 Markdown 和 emoji，但默认面向工程师，直接、简洁、可执行。"
+            "不要默认展示内部 case id、dataset id、artifact id，也不要要求用户手动提供 dataset id；"
+            "系统会自动使用当前案例最新上传的数据。"
+            "常规诊断优先调用 inspect_dataset 了解字段和样例，再调用 profile_dataset、build_trend_chart、diagnose_performance。"
         )
         history = [
             {"role": item.role, "content": item.content}
@@ -235,10 +438,143 @@ class AgentRuntime:
         ]
         user_message = (
             f"{user_content}\n\n"
-            f"Active dataset id: {active_dataset_id or 'none'}\n"
+            f"Route decision JSON:\n{decision.model_dump(mode='json')}\n"
+            f"Active dataset available: {bool(active_dataset_id)}\n"
             f"Case context summary JSON:\n{context}"
         )
         return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_message}]
+
+    def _handle_non_tool_llm_turn(
+        self,
+        *,
+        case_id: str,
+        content: str,
+        decision: RouteDecision,
+    ) -> AgentTurnResult:
+        messages = self._build_non_tool_messages(case_id=case_id, user_content=content, decision=decision)
+        result = self._call_llm_for_summary(case_id=case_id, messages=messages)
+        clean_content = self._sanitize_user_visible_text(result.content or "我需要更多信息才能继续。")
+        return self._local_reply(
+            case_id=case_id,
+            content=clean_content,
+            decision=decision,
+            llm_used=True,
+            provider=self.llm.provider_name,
+            model=self.llm.model,
+        )
+
+    def _build_non_tool_messages(self, *, case_id: str, user_content: str, decision: RouteDecision) -> list[dict[str, Any]]:
+        route_context = self._build_route_context(case_id=case_id)
+        system_prompt = (
+            "你是半导体工业设备性能诊断平台的辅助诊断 Agent。"
+            "根据路由结果回复用户。可以使用 Markdown 和 emoji。"
+            "不要默认展示内部 case id、dataset id、artifact id。"
+            "不要要求用户手动提供 dataset id；如果需要数据，只提示用户上传数据文件。"
+            "如果 response_style=brief，回复应简短。"
+            "资料问答可以基于通用工程知识回答，但要说明当前尚未接入专用知识库。"
+        )
+        return [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"用户输入: {user_content}\n"
+                    f"Route decision JSON: {decision.model_dump(mode='json')}\n"
+                    f"Case state: {route_context}"
+                ),
+            },
+        ]
+
+    def _local_reply(
+        self,
+        *,
+        case_id: str,
+        content: str,
+        decision: RouteDecision,
+        llm_used: bool,
+        blocked_by_state_gate: bool = False,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> AgentTurnResult:
+        clean_content = self._sanitize_user_visible_text(content)
+        artifacts = self.repository.list_case_artifacts(case_id)
+        tool_traces = self.repository.list_case_tool_traces(case_id)
+        assistant_message = self.repository.add_message(
+            AgentMessage(
+                case_id=case_id,
+                role="assistant",
+                content=clean_content,
+                metadata=self._message_metadata(
+                    decision=decision,
+                    tool_count=0,
+                    artifact_count=len(artifacts),
+                    llm_used=llm_used,
+                    blocked_by_state_gate=blocked_by_state_gate,
+                    provider=provider,
+                    model=model,
+                ),
+            )
+        )
+        self.memory.update_midterm(case_id, clean_content[:500])
+        return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=clean_content)
+
+    def _build_route_context(self, *, case_id: str) -> CaseRouteContext:
+        datasets = self.repository.list_case_datasets(case_id)
+        return CaseRouteContext(
+            has_dataset=bool(datasets),
+            dataset_count=len(datasets),
+            artifact_count=len(self.repository.list_case_artifacts(case_id)),
+            evidence_count=len(self.repository.list_case_evidence(case_id)),
+            latest_dataset_filename=datasets[-1].filename if datasets else None,
+        )
+
+    def _message_metadata(
+        self,
+        *,
+        decision: RouteDecision,
+        tool_count: int,
+        artifact_count: int,
+        llm_used: bool,
+        blocked_by_state_gate: bool = False,
+        provider: str | None = None,
+        model: str | None = None,
+        step_count: int = 0,
+        stop_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "intent": decision.intent,
+            "route": decision.intent,
+            "requires_dataset": decision.requires_dataset,
+            "llm_used": llm_used,
+            "blocked_by_state_gate": blocked_by_state_gate,
+            "tool_count": tool_count,
+            "artifact_count": artifact_count,
+            "step_count": step_count,
+            "stop_reason": stop_reason,
+            "llm_provider": provider or self.llm.provider_name,
+            "llm_model": model or self.llm.model,
+        }
+
+    def _stub_non_tool_reply(self, *, decision: RouteDecision, has_dataset: bool) -> str:
+        if decision.intent == "chat_response":
+            if has_dataset:
+                return "你好。当前数据已就绪，可以直接告诉我你想分析的问题。"
+            return "你好。请先上传设备性能 CSV，上传后我可以开始分析。"
+        if decision.intent == "knowledge_qa":
+            return "我可以回答设备性能诊断相关资料问题；当前专用知识库还未接入，回答会基于通用工程知识。"
+        if decision.intent == "workflow_request":
+            return "Workflow 能力还在规划中。当前可以先完成单次数据分析和诊断。"
+        return "我需要更多信息才能继续。你可以上传数据文件，或描述想分析的问题。"
+
+    def _sanitize_user_visible_text(self, content: str) -> str:
+        sanitized = re.sub(r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", "", content, flags=re.DOTALL)
+        sanitized = re.sub(r"<tool_calls>.*?</tool_calls>", "", sanitized, flags=re.DOTALL | re.IGNORECASE)
+        sanitized = re.sub(r"<function_call>.*?</function_call>", "", sanitized, flags=re.DOTALL | re.IGNORECASE)
+        sanitized = re.sub(r"\bcase_[a-zA-Z0-9]+\b", "当前案例", sanitized)
+        sanitized = re.sub(r"\bds_[a-zA-Z0-9]+\b", "当前数据集", sanitized)
+        sanitized = re.sub(r"\bart_[a-zA-Z0-9]+\b", "分析结果", sanitized)
+        sanitized = re.sub(r"\bmsg_[a-zA-Z0-9]+\b", "消息", sanitized)
+        return sanitized
 
     def _call_llm_for_plan(
         self,
@@ -259,6 +595,31 @@ class AgentRuntime:
             duration_ms=int(result.metadata.get("duration_ms", 0)),
         )
         return result
+
+    def _record_agent_step(
+        self,
+        *,
+        case_id: str,
+        step_index: int,
+        phase: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        observations: list[dict[str, Any]] | None = None,
+        llm_metadata: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
+        duration_ms: int = 0,
+    ) -> None:
+        self.repository.add_agent_step_trace(
+            AgentStepTrace(
+                case_id=case_id,
+                step_index=step_index,
+                phase=phase,  # type: ignore[arg-type]
+                tool_calls=tool_calls or [],
+                observations=observations or [],
+                llm_metadata=llm_metadata or {},
+                stop_reason=stop_reason,
+                duration_ms=duration_ms,
+            )
+        )
 
     def _call_llm_for_summary(self, *, case_id: str, messages: list[dict[str, Any]]):
         try:

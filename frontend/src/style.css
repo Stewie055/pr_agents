@@ -123,6 +123,12 @@ h3 {
   font-size: 13px;
 }
 
+.state-line {
+  color: #5f7f88;
+  font-size: 14px;
+  margin-bottom: 0;
+}
+
 .messages {
   display: flex;
   flex: 1;
@@ -146,6 +152,27 @@ h3 {
   align-self: flex-start;
   background: #fff;
   border: 1px solid #d9e1e4;
+}
+
+.message-content {
+  line-height: 1.55;
+}
+
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  margin: 10px 0 6px;
+}
+
+.message-content ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.message-content code {
+  background: #edf3f5;
+  border-radius: 4px;
+  padding: 1px 4px;
 }
 
 .composer {

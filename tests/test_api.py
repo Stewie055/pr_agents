@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from semidiag.agent import AgentRuntime
+from semidiag.agent.llm import StubLLMProvider
 from semidiag.api.main import AppState, create_app
+from semidiag.tools import build_default_registry
 
 
 CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
@@ -15,7 +18,9 @@ CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
 
 
 def test_api_case_upload_and_agent_message(tmp_path):
-    app = create_app(AppState(tmp_path))
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider())
+    app = create_app(state)
     client = TestClient(app)
 
     created = client.post("/api/cases", json={"title": "Chamber drift"}).json()
@@ -40,7 +45,9 @@ def test_api_case_upload_and_agent_message(tmp_path):
 
 
 def test_api_lists_tool_contracts(tmp_path):
-    app = create_app(AppState(tmp_path))
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider())
+    app = create_app(state)
     client = TestClient(app)
 
     response = client.get("/api/tools")

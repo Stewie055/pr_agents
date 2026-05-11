@@ -27,6 +27,27 @@ class CSVDiagnosticService:
             data={"rows": rows[:100], "row_count": len(rows), "columns": columns},
         )
 
+    def inspect_dataset(self, *, case_id: str, dataset_id: str, path: str) -> AnalysisArtifact:
+        rows = self._read_rows(path)
+        columns = list(rows[0].keys()) if rows else []
+        numeric = self._numeric_columns(rows)
+        column_types = {column: ("numeric" if column in numeric else "text") for column in columns}
+        preview = rows[:5]
+        return AnalysisArtifact(
+            case_id=case_id,
+            kind="table",
+            title="Dataset schema and preview",
+            summary=f"Inspected {len(rows)} rows and {len(columns)} columns.",
+            source_file_id=dataset_id,
+            data={
+                "columns": columns,
+                "column_types": column_types,
+                "numeric_columns": list(numeric.keys()),
+                "row_count": len(rows),
+                "preview": preview,
+            },
+        )
+
     def profile_dataset(self, *, case_id: str, dataset_id: str, path: str) -> tuple[AnalysisArtifact, list[Evidence]]:
         rows = self._read_rows(path)
         numeric = self._numeric_columns(rows)

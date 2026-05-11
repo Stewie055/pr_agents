@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from semidiag.domain import (
     AgentMessage,
+    AgentStepTrace,
     AnalysisArtifact,
     AuditEvent,
     DatasetRecord,
@@ -137,6 +138,13 @@ class SQLiteRepository:
     def list_case_tool_traces(self, case_id: str) -> list[ToolCallTrace]:
         return [item for item in self._list("tool_trace", ToolCallTrace) if item.case_id == case_id]
 
+    def add_agent_step_trace(self, trace: AgentStepTrace) -> AgentStepTrace:
+        self._put("agent_step", trace)
+        return trace
+
+    def list_case_agent_step_traces(self, case_id: str) -> list[AgentStepTrace]:
+        return [item for item in self._list("agent_step", AgentStepTrace) if item.case_id == case_id]
+
     def add_audit_event(self, event: AuditEvent) -> AuditEvent:
         self._put("audit", event)
         return event
@@ -162,6 +170,7 @@ class SQLiteRepository:
             "artifacts": self.list_case_artifacts(case_id),
             "evidence": self.list_case_evidence(case_id),
             "tool_traces": self.list_case_tool_traces(case_id),
+            "agent_steps": self.list_case_agent_step_traces(case_id),
             "audit_events": self.list_case_audit_events(case_id),
             "llm_audit_events": self.list_case_llm_audit_events(case_id),
         }

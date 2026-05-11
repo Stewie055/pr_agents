@@ -100,6 +100,19 @@ class ToolCallTrace(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class AgentStepTrace(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("step"))
+    case_id: str
+    step_index: int
+    phase: Literal["route", "gate", "reason", "act", "observe", "finalize", "stop"]
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    llm_metadata: dict[str, Any] = Field(default_factory=dict)
+    stop_reason: str | None = None
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class AuditEvent(BaseModel):
     id: str = Field(default_factory=lambda: new_id("audit"))
     case_id: str

@@ -35,6 +35,19 @@ Tool 执行必须：
 
 Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Evidence` 或诊断 payload。
 
+## Tool Observation
+
+每个 ToolResult 必须提供给 Agent loop 使用的结构化 Observation：
+
+- `tool_name`
+- `summary`
+- `data`
+- `artifact_ids`
+- `evidence_ids`
+- `next_suggestions`
+
+Observation 面向 LLM 推理，不等同于前端展示文本。它应包含足够的结构化信息，例如字段名、列类型、统计摘要、趋势序列名、诊断结论和建议动作，但不应包含完整原始文件内容。
+
 ## Artifact Types
 
 当前支持：

@@ -10,6 +10,9 @@
 - 本地设备性能文件上传
 - 可插拔诊断插件包骨架
 - Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
+- LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
+- State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
+- ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复
 - 通用 CSV 性能数据示例诊断
 - 结构化 Artifact、Evidence、DiagnosisConclusion 和报告草稿
 - 后端 pytest 与前端 Vitest 自动化测试
@@ -46,14 +49,20 @@ npm install
 cp .env.example .env
 ```
 
-默认 `SEMIDIAG_LLM_PROVIDER=stub`，不需要真实模型即可运行。接入内网 OpenAI-compatible 模型时：
+`.env.example` 默认按 DeepSeek V4 Flash 配置，本地运行前复制后填写 API key：
+
+```bash
+cp .env.example .env
+```
 
 ```bash
 SEMIDIAG_LLM_PROVIDER=openai_compatible
-SEMIDIAG_LLM_BASE_URL=http://your-llm-gateway/v1
-SEMIDIAG_LLM_MODEL=your-model
-SEMIDIAG_LLM_API_KEY=your-key
+SEMIDIAG_LLM_BASE_URL=https://api.deepseek.com
+SEMIDIAG_LLM_MODEL=deepseek-v4-flash
+SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 ```
+
+不想连接真实模型时，把 `SEMIDIAG_LLM_PROVIDER` 改成 `stub`。
 
 后端：
 
@@ -92,8 +101,10 @@ npm run build
 1. 在 WebUI 创建诊断案例。
 2. 上传包含数值指标的设备性能 CSV。
 3. 发送“请分析这份设备性能数据，给出诊断、证据和建议”。
-4. Agent 依次调用解析、画像、趋势图、诊断工具。
+4. Agent 通过 ReAct loop 调用字段检查、画像、趋势图、诊断等工具。
 5. WebUI 展示工具轨迹、Artifact、证据和报告草稿。
+
+Agent 会自动使用当前案例最新上传的数据集。界面和回复默认不展示内部 case/dataset/artifact id，也不会要求用户手动输入 dataset id。
 
 ## Documentation
 

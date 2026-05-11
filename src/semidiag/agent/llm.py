@@ -154,11 +154,14 @@ class OpenAICompatibleProvider:
             )
 
         duration_ms = int((perf_counter() - started) * 1000)
+        metadata: dict[str, Any] = {"provider": self.provider_name, "model": self.model, "duration_ms": duration_ms}
+        if "reasoning_content" in message:
+            metadata["reasoning_content"] = message.get("reasoning_content") or ""
         return LLMResult(
             content=message.get("content") or "",
             tool_calls=tool_calls,
             raw_response=raw,
-            metadata={"provider": self.provider_name, "model": self.model, "duration_ms": duration_ms},
+            metadata=metadata,
         )
 
 

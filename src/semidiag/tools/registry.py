@@ -39,11 +39,22 @@ class ToolContext:
 
 
 @dataclass
+class ToolObservation:
+    tool_name: str
+    summary: str
+    data: dict[str, Any] = field(default_factory=dict)
+    artifact_ids: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    next_suggestions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ToolResult:
     summary: str
     artifacts: list[AnalysisArtifact] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     payload: dict[str, Any] = field(default_factory=dict)
+    observation: ToolObservation | None = None
 
 
 ToolHandler = Callable[[ToolContext, dict[str, Any]], ToolResult]
@@ -132,7 +143,10 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="parse_dataset",
-            description="Parse an uploaded equipment performance CSV file.",
+            description=(
+                "Parse an uploaded equipment performance CSV file and create a dataset artifact. "
+                "Use this before profiling or diagnosis if the dataset has not been parsed."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
@@ -145,8 +159,28 @@ def build_default_registry() -> ToolRegistry:
     )
     registry.register(
         ToolDefinition(
+            name="inspect_dataset",
+            description=(
+                "Inspect dataset schema, column names, column types, row count, and a small preview. "
+                "Use this when you need to understand fields or sample rows before analysis."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
+                "required": ["dataset_id"],
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "table"}}},
+        ),
+        _inspect_dataset,
+    )
+    registry.register(
+        ToolDefinition(
             name="profile_dataset",
-            description="Profile numeric equipment metrics and collect evidence.",
+            description=(
+                "Profile numeric equipment metrics and collect evidence such as variance and outlier signals. "
+                "Use this after parsing or inspecting the dataset."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
@@ -160,7 +194,7 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="build_trend_chart",
-            description="Build chart-ready trend data for numeric equipment metrics.",
+            description="Build chart-ready trend data for numeric equipment metrics when the user needs trend or visual analysis.",
             input_schema={
                 "type": "object",
                 "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
@@ -174,7 +208,10 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="diagnose_performance",
-            description="Generate preliminary diagnosis from artifacts and evidence.",
+            description=(
+                "Generate a preliminary equipment performance diagnosis from existing profile artifacts and evidence. "
+                "Use this after profile_dataset has produced metric evidence."
+            ),
             input_schema={"type": "object", "properties": {}, "additionalProperties": False},
             output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "diagnosis"}}},
         ),
@@ -183,7 +220,7 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="generate_report",
-            description="Generate an editable diagnostic report draft.",
+            description="Generate an editable diagnostic report draft after analysis or diagnosis artifacts are available.",
             input_schema={"type": "object", "properties": {}, "additionalProperties": False},
             output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "report"}}},
         ),
@@ -206,7 +243,49 @@ def _parse_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResul
         dataset_id=dataset.id,
         path=dataset.path,
     )
-    return ToolResult(summary=artifact.summary, artifacts=[artifact], payload={"artifact_id": artifact.id})
+    return ToolResult(
+        summary=artifact.summary,
+        artifacts=[artifact],
+        payload={"artifact_id": artifact.id},
+        observation=ToolObservation(
+            tool_name="parse_dataset",
+            summary=artifact.summary,
+            data={
+                "columns": artifact.data.get("columns", []),
+                "row_count": artifact.data.get("row_count", 0),
+                "preview": artifact.data.get("rows", [])[:5],
+            },
+            artifact_ids=[artifact.id],
+            next_suggestions=["inspect_dataset", "profile_dataset"],
+        ),
+    )
+
+
+def _inspect_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
+    dataset = _dataset(context, arguments["dataset_id"])
+    artifact = context.plugin.diagnostic_service().inspect_dataset(
+        case_id=context.case_id,
+        dataset_id=dataset.id,
+        path=dataset.path,
+    )
+    return ToolResult(
+        summary=artifact.summary,
+        artifacts=[artifact],
+        payload={"artifact_id": artifact.id},
+        observation=ToolObservation(
+            tool_name="inspect_dataset",
+            summary=artifact.summary,
+            data={
+                "columns": artifact.data.get("columns", []),
+                "column_types": artifact.data.get("column_types", {}),
+                "numeric_columns": artifact.data.get("numeric_columns", []),
+                "row_count": artifact.data.get("row_count", 0),
+                "preview": artifact.data.get("preview", []),
+            },
+            artifact_ids=[artifact.id],
+            next_suggestions=["profile_dataset", "build_trend_chart"],
+        ),
+    )
 
 
 def _profile_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
@@ -216,7 +295,23 @@ def _profile_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolRes
         dataset_id=dataset.id,
         path=dataset.path,
     )
-    return ToolResult(summary=artifact.summary, artifacts=[artifact], evidence=evidence, payload={"artifact_id": artifact.id})
+    return ToolResult(
+        summary=artifact.summary,
+        artifacts=[artifact],
+        evidence=evidence,
+        payload={"artifact_id": artifact.id},
+        observation=ToolObservation(
+            tool_name="profile_dataset",
+            summary=artifact.summary,
+            data={
+                "profile": artifact.data.get("profile", {}),
+                "evidence": [{"id": item.id, "title": item.title, "summary": item.summary} for item in evidence],
+            },
+            artifact_ids=[artifact.id],
+            evidence_ids=[item.id for item in evidence],
+            next_suggestions=["build_trend_chart", "diagnose_performance"],
+        ),
+    )
 
 
 def _build_trend_chart(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
@@ -226,7 +321,22 @@ def _build_trend_chart(context: ToolContext, arguments: dict[str, Any]) -> ToolR
         dataset_id=dataset.id,
         path=dataset.path,
     )
-    return ToolResult(summary=artifact.summary, artifacts=[artifact], payload={"artifact_id": artifact.id})
+    return ToolResult(
+        summary=artifact.summary,
+        artifacts=[artifact],
+        payload={"artifact_id": artifact.id},
+        observation=ToolObservation(
+            tool_name="build_trend_chart",
+            summary=artifact.summary,
+            data={
+                "chart_type": artifact.data.get("type"),
+                "series_names": [item.get("name") for item in artifact.data.get("series", [])],
+                "point_count": len(artifact.data.get("x", [])),
+            },
+            artifact_ids=[artifact.id],
+            next_suggestions=["diagnose_performance"],
+        ),
+    )
 
 
 def _diagnose_performance(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
@@ -244,6 +354,21 @@ def _diagnose_performance(context: ToolContext, arguments: dict[str, Any]) -> To
         summary=artifact.summary,
         artifacts=[artifact],
         payload={"conclusion": conclusion.model_dump(mode="json")},
+        observation=ToolObservation(
+            tool_name="diagnose_performance",
+            summary=artifact.summary,
+            data={
+                "title": conclusion.title,
+                "possible_causes": conclusion.possible_causes,
+                "confidence": conclusion.confidence,
+                "risk_level": conclusion.risk_level,
+                "recommendations": conclusion.recommendations,
+                "evidence_ids": conclusion.evidence_ids,
+            },
+            artifact_ids=[artifact.id],
+            evidence_ids=conclusion.evidence_ids,
+            next_suggestions=["generate_report"],
+        ),
     )
 
 
@@ -255,4 +380,17 @@ def _generate_report(context: ToolContext, arguments: dict[str, Any]) -> ToolRes
         artifacts=artifacts,
         evidence=evidence,
     )
-    return ToolResult(summary=artifact.summary, artifacts=[artifact], payload={"artifact_id": artifact.id})
+    return ToolResult(
+        summary=artifact.summary,
+        artifacts=[artifact],
+        payload={"artifact_id": artifact.id},
+        observation=ToolObservation(
+            tool_name="generate_report",
+            summary=artifact.summary,
+            data={
+                "sections": [section.get("heading") for section in artifact.data.get("sections", [])],
+                "format": artifact.data.get("format"),
+            },
+            artifact_ids=[artifact.id],
+        ),
+    )
