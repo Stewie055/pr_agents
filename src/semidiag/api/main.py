@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from semidiag.agent import AgentRuntime
+from semidiag.agent.llm import LLMError, build_llm_provider
+from semidiag.config import load_llm_config
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.tools import build_default_registry
@@ -27,7 +29,8 @@ class AppState:
         root_path = Path(root)
         self.repository = SQLiteRepository(root_path / "semidiag.sqlite3")
         self.file_store = LocalFileStore(root_path / "files")
-        self.agent = AgentRuntime(self.repository, registry=build_default_registry())
+        llm_provider = build_llm_provider(load_llm_config())
+        self.agent = AgentRuntime(self.repository, registry=build_default_registry(), llm=llm_provider)
 
 
 def create_app(state: AppState | None = None) -> FastAPI:
@@ -96,6 +99,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="case not found") from exc
+        except LLMError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         return {
             "message": result.message,
             "summary": result.summary,

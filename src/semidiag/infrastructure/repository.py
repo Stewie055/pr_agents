@@ -14,6 +14,7 @@ from semidiag.domain import (
     DatasetRecord,
     DiagnosticCase,
     Evidence,
+    LLMAuditEvent,
     ToolCallTrace,
 )
 
@@ -143,6 +144,13 @@ class SQLiteRepository:
     def list_case_audit_events(self, case_id: str) -> list[AuditEvent]:
         return [item for item in self._list("audit", AuditEvent) if item.case_id == case_id]
 
+    def add_llm_audit_event(self, event: LLMAuditEvent) -> LLMAuditEvent:
+        self._put("llm_audit", event)
+        return event
+
+    def list_case_llm_audit_events(self, case_id: str) -> list[LLMAuditEvent]:
+        return [item for item in self._list("llm_audit", LLMAuditEvent) if item.case_id == case_id]
+
     def case_snapshot(self, case_id: str) -> dict[str, Any]:
         case = self.get_case(case_id)
         if case is None:
@@ -155,4 +163,5 @@ class SQLiteRepository:
             "evidence": self.list_case_evidence(case_id),
             "tool_traces": self.list_case_tool_traces(case_id),
             "audit_events": self.list_case_audit_events(case_id),
+            "llm_audit_events": self.list_case_llm_audit_events(case_id),
         }

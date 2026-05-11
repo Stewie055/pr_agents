@@ -9,7 +9,7 @@
 - SQLite 元数据、会话、工具轨迹和 Artifact 存储
 - 本地设备性能文件上传
 - 可插拔诊断插件包骨架
-- Stub LLM + Agent runtime + Tool Registry
+- Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
 - 通用 CSV 性能数据示例诊断
 - 结构化 Artifact、Evidence、DiagnosisConclusion 和报告草稿
 - 后端 pytest 与前端 Vitest 自动化测试
@@ -39,6 +39,21 @@ npm install
 ```
 
 ## Run
+
+复制并按需修改 LLM 配置：
+
+```bash
+cp .env.example .env
+```
+
+默认 `SEMIDIAG_LLM_PROVIDER=stub`，不需要真实模型即可运行。接入内网 OpenAI-compatible 模型时：
+
+```bash
+SEMIDIAG_LLM_PROVIDER=openai_compatible
+SEMIDIAG_LLM_BASE_URL=http://your-llm-gateway/v1
+SEMIDIAG_LLM_MODEL=your-model
+SEMIDIAG_LLM_API_KEY=your-key
+```
 
 后端：
 
@@ -87,3 +102,4 @@ npm run build
 - [Agent Design](docs/agent_design.md)
 - [Service and Tool Contract](docs/service_tool_contract.md)
 - [Development Guide](docs/dev_guide.md)
+- [LLM Provider](docs/llm_provider.md)

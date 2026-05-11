@@ -107,3 +107,15 @@ class AuditEvent(BaseModel):
     action: str
     details: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class LLMAuditEvent(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("llm"))
+    case_id: str
+    provider: str
+    model: str
+    request: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] | None = None
+    error: str | None = None
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=utc_now)

@@ -14,7 +14,12 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 
 ## Runtime
 
-当前 `AgentRuntime` 使用 deterministic `StubLLMProvider`，根据消息内容选择工具序列：
+`AgentRuntime` 支持两种 LLM provider：
+
+- `StubLLMProvider`：未配置真实 LLM 时的离线模式，根据消息内容选择固定工具序列。
+- `OpenAICompatibleProvider`：调用 OpenAI-compatible `/v1/chat/completions`，使用 tool calling 选择工具。
+
+Stub 模式根据消息内容选择工具序列：
 
 - 数据解析。
 - 指标画像。
@@ -22,7 +27,36 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 - 初步性能诊断。
 - 报告草稿生成。
 
-后续可替换为内网 OpenAI-compatible LLM provider。替换时应保留工具白名单、权限检查和审计记录。
+真实 LLM 模式执行两阶段流程：
+
+1. 发送 system prompt、案例上下文摘要、最近消息和 tools schema，让模型返回 tool calls。
+2. 执行白名单工具，将工具结果摘要回填给模型，生成最终中文回答。
+
+模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
+
+## LLM Context
+
+发送给模型的上下文只包含：
+
+- DiagnosticCase 摘要。
+- 数据集 id、文件名和 content type。
+- Artifact id、类型、标题、摘要。
+- Evidence id、类型、标题、摘要。
+- 最近用户和助手消息。
+- 中期记忆摘要。
+
+原始设备文件内容和行级 CSV 数据不直接发送给 LLM。
+
+## Audit
+
+LLM 调用会记录：
+
+- provider 和 model。
+- messages 和 tools。
+- tool calls / response。
+- 错误和耗时。
+
+API key 和 Authorization header 不能进入审计记录。
 
 ## Memory
 

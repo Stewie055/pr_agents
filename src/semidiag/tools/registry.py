@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from semidiag.domain import AnalysisArtifact, AuditEvent, Evidence, ToolCallTrace
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import GenericEquipmentPlugin
+from semidiag.plugins import DiagnosticPlugin, GenericEquipmentPlugin
 
 
 class ToolDefinition(BaseModel):
@@ -19,13 +19,23 @@ class ToolDefinition(BaseModel):
     required_permissions: list[str] = Field(default_factory=list)
     risk_level: str = "low"
 
+    def as_openai_tool(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.input_schema or {"type": "object", "properties": {}},
+            },
+        }
+
 
 @dataclass
 class ToolContext:
     case_id: str
     actor: str
     repository: SQLiteRepository
-    plugin: GenericEquipmentPlugin
+    plugin: DiagnosticPlugin
 
 
 @dataclass
@@ -50,6 +60,12 @@ class ToolRegistry:
 
     def list_tools(self) -> list[ToolDefinition]:
         return list(self._definitions.values())
+
+    def get_tool(self, name: str) -> ToolDefinition | None:
+        return self._definitions.get(name)
+
+    def openai_tools(self) -> list[dict[str, Any]]:
+        return [definition.as_openai_tool() for definition in self.list_tools()]
 
     def run(self, name: str, context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
         if name not in self._handlers:
@@ -117,8 +133,13 @@ def build_default_registry() -> ToolRegistry:
         ToolDefinition(
             name="parse_dataset",
             description="Parse an uploaded equipment performance CSV file.",
-            input_schema={"dataset_id": "string"},
-            output_schema={"artifact": "dataset"},
+            input_schema={
+                "type": "object",
+                "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
+                "required": ["dataset_id"],
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "dataset"}}},
         ),
         _parse_dataset,
     )
@@ -126,8 +147,13 @@ def build_default_registry() -> ToolRegistry:
         ToolDefinition(
             name="profile_dataset",
             description="Profile numeric equipment metrics and collect evidence.",
-            input_schema={"dataset_id": "string"},
-            output_schema={"artifact": "table", "evidence": "list"},
+            input_schema={
+                "type": "object",
+                "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
+                "required": ["dataset_id"],
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "table"}}},
         ),
         _profile_dataset,
     )
@@ -135,8 +161,13 @@ def build_default_registry() -> ToolRegistry:
         ToolDefinition(
             name="build_trend_chart",
             description="Build chart-ready trend data for numeric equipment metrics.",
-            input_schema={"dataset_id": "string"},
-            output_schema={"artifact": "chart"},
+            input_schema={
+                "type": "object",
+                "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
+                "required": ["dataset_id"],
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "chart"}}},
         ),
         _build_trend_chart,
     )
@@ -144,8 +175,8 @@ def build_default_registry() -> ToolRegistry:
         ToolDefinition(
             name="diagnose_performance",
             description="Generate preliminary diagnosis from artifacts and evidence.",
-            input_schema={"profile_artifact_id": "string"},
-            output_schema={"artifact": "diagnosis", "conclusion": "object"},
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "diagnosis"}}},
         ),
         _diagnose_performance,
     )
@@ -153,8 +184,8 @@ def build_default_registry() -> ToolRegistry:
         ToolDefinition(
             name="generate_report",
             description="Generate an editable diagnostic report draft.",
-            input_schema={},
-            output_schema={"artifact": "report"},
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            output_schema={"type": "object", "properties": {"artifact": {"type": "string", "const": "report"}}},
         ),
         _generate_report,
     )
