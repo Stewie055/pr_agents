@@ -19,6 +19,7 @@ const traceLoading = ref(false);
 const error = ref("");
 const snapshot = ref<CaseSnapshot | null>(null);
 const trace = ref<CaseTrace | null>(null);
+const debugMode = ref(new URLSearchParams(window.location.search).get("debug") === "trace");
 
 const activeDatasetId = computed(() => snapshot.value?.datasets.at(-1)?.id);
 const latestDatasetName = computed(() => snapshot.value?.datasets.at(-1)?.filename);
@@ -138,6 +139,20 @@ async function loadTrace() {
   }
 }
 
+async function openTraceDebug() {
+  if (!snapshot.value) {
+    return;
+  }
+  debugMode.value = true;
+  window.history.replaceState(null, "", "?debug=trace");
+  await loadTrace();
+}
+
+function closeTraceDebug() {
+  debugMode.value = false;
+  window.history.replaceState(null, "", window.location.pathname);
+}
+
 async function downloadTrace() {
   if (!snapshot.value) {
     return;
@@ -161,7 +176,57 @@ async function downloadTrace() {
 </script>
 
 <template>
-  <main class="workspace">
+  <main v-if="debugMode" class="debug-workspace">
+    <header class="debug-topbar">
+      <div>
+        <p class="eyebrow">Trace Debug</p>
+        <h1>Agent 调试台</h1>
+      </div>
+      <div class="debug-actions">
+        <button @click="closeTraceDebug">返回主界面</button>
+        <button :disabled="!snapshot || traceLoading" @click="loadTrace">{{ traceLoading ? "加载中..." : "刷新 Trace" }}</button>
+        <button :disabled="!snapshot || traceLoading" @click="downloadTrace">导出 JSON</button>
+      </div>
+    </header>
+
+    <section v-if="!snapshot" class="debug-empty">
+      <p>请先在主界面创建案例，然后从案例入口打开调试台。</p>
+    </section>
+
+    <section v-else class="debug-grid">
+      <section class="debug-panel">
+        <h2>Agent Steps</h2>
+        <ol v-if="traceSteps.length" class="trace-timeline">
+          <li v-for="step in traceSteps" :key="step.id">
+            <strong>{{ step.step_index }} · {{ step.phase }}</strong>
+            <span>{{ step.duration_ms ?? 0 }} ms</span>
+            <p v-if="step.stop_reason">stop: {{ step.stop_reason }}</p>
+            <details v-if="step.tool_calls?.length || step.observations?.length || step.llm_metadata">
+              <summary>查看 step JSON</summary>
+              <pre>{{ formatJson(step) }}</pre>
+            </details>
+          </li>
+        </ol>
+        <p v-else class="empty-trace">暂无 Agent step trace。</p>
+      </section>
+
+      <section class="debug-panel">
+        <h2>LLM Audit</h2>
+        <article v-for="event in llmEvents" :key="event.id" class="llm-event">
+          <strong>{{ event.provider }} / {{ event.model }}</strong>
+          <span>{{ event.duration_ms }} ms</span>
+          <p v-if="event.error">{{ event.error }}</p>
+          <details>
+            <summary>request / response</summary>
+            <pre>{{ formatJson({ request: event.request, response: event.response }) }}</pre>
+          </details>
+        </article>
+        <p v-if="!llmEvents.length" class="empty-trace">暂无 LLM 调用记录。</p>
+      </section>
+    </section>
+  </main>
+
+  <main v-else class="workspace">
     <aside class="sidebar">
       <div>
         <p class="eyebrow">Diagnostic Case</p>
@@ -184,6 +249,7 @@ async function downloadTrace() {
         <strong>{{ snapshot.case.title }}</strong>
         <span>{{ snapshot.case.equipment_type }}</span>
         <span>{{ caseStateText }}</span>
+        <button class="debug-link" :disabled="!snapshot" @click="openTraceDebug">调试 Trace</button>
       </section>
     </aside>
 
@@ -224,42 +290,6 @@ async function downloadTrace() {
             <p>{{ trace.result_summary }}</p>
           </li>
         </ol>
-      </section>
-
-      <section class="trace-debug">
-        <div class="trace-debug-header">
-          <h3>Trace 调试台</h3>
-          <div>
-            <button :disabled="!snapshot || traceLoading" @click="loadTrace">{{ traceLoading ? "加载中..." : "刷新" }}</button>
-            <button :disabled="!snapshot || traceLoading" @click="downloadTrace">导出 JSON</button>
-          </div>
-        </div>
-
-        <ol v-if="traceSteps.length" class="trace-timeline">
-          <li v-for="step in traceSteps" :key="step.id">
-            <strong>{{ step.step_index }} · {{ step.phase }}</strong>
-            <span>{{ step.duration_ms ?? 0 }} ms</span>
-            <p v-if="step.stop_reason">stop: {{ step.stop_reason }}</p>
-            <details v-if="step.tool_calls?.length || step.observations?.length || step.llm_metadata">
-              <summary>查看 step JSON</summary>
-              <pre>{{ formatJson(step) }}</pre>
-            </details>
-          </li>
-        </ol>
-        <p v-else class="empty-trace">暂无 Agent step trace。</p>
-
-        <details v-if="llmEvents.length" class="llm-events">
-          <summary>LLM 调用 {{ llmEvents.length }} 次</summary>
-          <article v-for="event in llmEvents" :key="event.id">
-            <strong>{{ event.provider }} / {{ event.model }}</strong>
-            <span>{{ event.duration_ms }} ms</span>
-            <p v-if="event.error">{{ event.error }}</p>
-            <details>
-              <summary>request / response</summary>
-              <pre>{{ formatJson({ request: event.request, response: event.response }) }}</pre>
-            </details>
-          </article>
-        </details>
       </section>
 
       <section>

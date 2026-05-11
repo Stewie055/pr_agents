@@ -44,6 +44,8 @@ DeepSeek V4 thinking mode 会在 tool-call 轮次返回 `reasoning_content`。�
 
 Runtime 的工具执行、Observation、重复调用保护和 max step 策略与 native 模式一致。
 
+XML+JSON 解析由独立 parser 负责。缺失动作块、同时出现 `<tool_calls>` 和 `<final_answer>`、多个 tool call 块、非法 JSON、空工具列表或非 object arguments 都会返回明确错误；首次格式错误会触发一次修复重试，并在 trace/audit 中保留可调试信息。
+
 ## Trace Debugging
 
 每轮 ReAct 会写入 AgentStepTrace。Trace 调试台聚合：
@@ -53,8 +55,8 @@ Runtime 的工具执行、Observation、重复调用保护和 max step 策略与
 - ToolCallTrace 和结构化 Observation。
 - Artifact/Evidence 摘要。
 
-Trace API 默认脱敏密钥和认证头，并截断超长文本。导出接口返回同样脱敏后的 JSON。
+Trace API 默认统一脱敏密钥和认证头，并截断超长文本。导出接口返回同样脱敏后的 JSON。
 
 ## User-Facing Output
 
-最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端展示最终回复、工具轨迹和 Artifact；调试台按需展示完整 step trace。
+最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端主界面展示最终回复、工具摘要和 Artifact；独立调试台按需展示完整 step trace。

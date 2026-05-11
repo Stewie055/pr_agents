@@ -69,7 +69,7 @@ def test_trace_api_returns_debug_data_with_redaction(tmp_path):
             step_index=1,
             phase="observe",
             observations=[{"summary": "ok"}],
-            llm_metadata={"tool_mode": "prompt_xml_json"},
+            llm_metadata={"tool_mode": "prompt_xml_json", "api_key": "step-secret"},
         )
     )
     state.repository.add_llm_audit_event(
@@ -95,6 +95,7 @@ def test_trace_api_returns_debug_data_with_redaction(tmp_path):
     dumped = response.text
     assert "secret-token" not in dumped
     assert "secret-key" not in dumped
+    assert "step-secret" not in dumped
     assert "***" in dumped
 
     export = client.get(f"/api/cases/{case.id}/trace/export")

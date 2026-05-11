@@ -36,6 +36,9 @@ class LLMProvider(Protocol):
     model: str
     tool_mode: str
 
+    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         raise NotImplementedError
 
@@ -74,6 +77,9 @@ class StubLLMProvider:
             for index, name in enumerate(self.plan_tools(user_message, has_dataset), start=1)
         ]
         return LLMResult(content="", tool_calls=calls, metadata={"provider": self.provider_name, "model": self.model})
+
+    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
+        return registry.openai_tools()
 
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
         tool_messages = [item.get("content", "") for item in messages if item.get("role") == "tool"]
@@ -223,6 +229,9 @@ class OpenAINativeToolProvider:
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=messages, tools=tools, tool_choice="auto")
 
+    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
+        return registry.openai_tools()
+
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=messages, tools=None, tool_choice=None)
 
@@ -287,8 +296,8 @@ class OpenAIPromptXmlJsonProvider:
         prompt_messages = self._build_prompt_messages(messages=messages, tools=tools)
         result = self.chat._chat(messages=prompt_messages, tools=None, tool_choice=None)
         try:
-            parsed = self._parse_xml_action(result.content)
-        except LLMError:
+            parsed = PromptXmlJsonParser.parse(result.content)
+        except LLMError as first_error:
             repair_messages = prompt_messages + [
                 {"role": "assistant", "content": result.content or ""},
                 {
@@ -301,7 +310,8 @@ class OpenAIPromptXmlJsonProvider:
                 },
             ]
             result = self.chat._chat(messages=repair_messages, tools=None, tool_choice=None)
-            parsed = self._parse_xml_action(result.content)
+            result.metadata["repair_reason"] = str(first_error)
+            parsed = PromptXmlJsonParser.parse(result.content)
         result.metadata["tool_mode"] = self.tool_mode
         result.metadata["raw_model_content"] = result.content
         if parsed["action"] == "final_answer":
@@ -311,6 +321,9 @@ class OpenAIPromptXmlJsonProvider:
         result.content = ""
         result.tool_calls = parsed["tool_calls"]
         return result
+
+    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
+        return registry.prompt_tools()
 
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=self._normalize_messages(messages), tools=None, tool_choice=None)
@@ -402,7 +415,10 @@ class OpenAIPromptXmlJsonProvider:
             normalized.append({"role": role, "content": message.get("content") or ""})
         return normalized
 
-    def _parse_xml_action(self, content: str) -> dict[str, Any]:
+
+class PromptXmlJsonParser:
+    @staticmethod
+    def parse(content: str) -> dict[str, Any]:
         tool_blocks = re.findall(r"<tool_calls>\s*(.*?)\s*</tool_calls>", content, flags=re.DOTALL | re.IGNORECASE)
         final_blocks = re.findall(r"<final_answer>\s*(.*?)\s*</final_answer>", content, flags=re.DOTALL | re.IGNORECASE)
         if tool_blocks and final_blocks:
@@ -424,16 +440,13 @@ class OpenAIPromptXmlJsonProvider:
             if not isinstance(item, dict):
                 raise LLMError("Prompt XML+JSON tool call must be an object", status_code=502)
             name = item.get("name")
-            arguments = item.get("arguments") or {}
+            arguments = item.get("arguments", {})
             if not isinstance(name, str) or not name:
                 raise LLMError("Prompt XML+JSON tool call name must be a string", status_code=502)
             if not isinstance(arguments, dict):
                 raise LLMError(f"Prompt XML+JSON arguments must be an object for {name}", status_code=502)
             calls.append(LLMToolCall(id=str(item.get("id") or f"call_{index}"), name=name, arguments=arguments))
         return {"action": "tool_calls", "tool_calls": calls}
-
-
-OpenAICompatibleProvider = OpenAINativeToolProvider
 
 
 def build_llm_provider(config: LLMConfig) -> LLMProvider:

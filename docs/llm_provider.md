@@ -70,7 +70,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 </final_answer>
 ```
 
-两种模式共享同一个 ReAct runtime：
+两种模式共享同一个 ReAct runtime，但工具协议由 provider 独立封装：
 
 - 第一阶段先由 LLM Router 输出 `RouteDecision` JSON。
 - State Gate 通过后，分析/诊断/报告路径才进入 tool calling。
@@ -80,6 +80,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 - DeepSeek V4 thinking mode 的 tool-call 轮次会返回 `reasoning_content`；系统会在回传 tool result 给模型时保留该字段，避免 DeepSeek 返回 400。
 - ReAct loop 的每一轮 tool-call 都会保留并回传 DeepSeek `reasoning_content`。
 - `prompt_xml_json` 模式会把历史工具计划和 observation 转成普通 XML 文本消息，兼容未开启 auto-tool-choice 的部署。
+- Runtime 不直接判断 `tool_mode`，只消费 provider 返回的统一 `LLMToolCall` 和最终回复。
 
 ## Context Policy
 
@@ -111,7 +112,7 @@ LLM prompt、request 和 response 会完整记录到 `llm_audit_events`。
 - 不记录 Authorization header 明文。
 - 后续接入用户权限后，LLM audit 应纳入案例审计视图。
 
-WebUI Trace 调试台通过 `/api/cases/{case_id}/trace` 查看脱敏后的消息、AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，并通过 `/api/cases/{case_id}/trace/export` 导出 JSON。
+独立 WebUI Trace 调试台通过 `/api/cases/{case_id}/trace` 查看脱敏后的消息、AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，并通过 `/api/cases/{case_id}/trace/export` 导出 JSON。主诊断界面默认不加载 trace。
 
 ## Testing
 

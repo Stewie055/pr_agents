@@ -123,6 +123,13 @@ h3 {
   font-size: 13px;
 }
 
+.debug-link {
+  background: rgb(255 255 255 / 12%);
+  color: #d7e8ec;
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
 .state-line {
   color: #5f7f88;
   font-size: 14px;
@@ -184,7 +191,8 @@ h3 {
 .tool-trace li,
 .report article,
 .trace-timeline li,
-.llm-events article {
+.llm-events article,
+.llm-event {
   border: 1px solid #dce4e7;
   border-radius: 8px;
   margin-bottom: 10px;
@@ -194,32 +202,11 @@ h3 {
 .artifact span,
 .tool-trace span,
 .trace-timeline span,
-.llm-events span {
+.llm-events span,
+.llm-event span {
   color: #5f7f88;
   font-size: 12px;
   text-transform: uppercase;
-}
-
-.trace-debug {
-  border-top: 1px solid #dce4e7;
-  margin-top: 18px;
-  padding-top: 16px;
-}
-
-.trace-debug-header {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.trace-debug-header div {
-  display: flex;
-  gap: 8px;
-}
-
-.trace-debug-header button {
-  padding: 7px 10px;
 }
 
 .trace-timeline {
@@ -232,7 +219,7 @@ h3 {
   margin-top: 8px;
 }
 
-.trace-debug pre {
+.debug-workspace pre {
   background: #182228;
   border-radius: 6px;
   color: #edf7f8;
@@ -243,6 +230,47 @@ h3 {
   padding: 10px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.debug-workspace {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.debug-topbar {
+  align-items: center;
+  border-bottom: 1px solid #d9e1e4;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+}
+
+.debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.debug-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
+}
+
+.debug-panel {
+  background: #fff;
+  border: 1px solid #d9e1e4;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.debug-empty {
+  background: #fff;
+  border: 1px solid #d9e1e4;
+  border-radius: 8px;
+  padding: 18px;
 }
 
 .empty-trace {
@@ -257,6 +285,16 @@ h3 {
 @media (max-width: 1020px) {
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .debug-grid,
+  .debug-topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .debug-topbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .chat {

@@ -69,7 +69,7 @@ def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
         payload["request"] = redact_trace_value(payload.get("request") or {})
         payload["response"] = redact_trace_value(payload.get("response")) if payload.get("response") is not None else None
         llm_events.append(payload)
-    return {
+    return redact_trace_value({
         "case": case.model_dump(mode="json"),
         "messages": [item.model_dump(mode="json") for item in repository.list_case_messages(case_id)],
         "agent_steps": [item.model_dump(mode="json") for item in repository.list_case_agent_step_traces(case_id)],
@@ -95,7 +95,7 @@ def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
             }
             for item in repository.list_case_evidence(case_id)
         ],
-    }
+    })
 
 
 def create_app(state: AppState | None = None) -> FastAPI:

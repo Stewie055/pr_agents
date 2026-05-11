@@ -32,7 +32,7 @@ Stub 模式根据消息内容选择工具序列：
 
 1. LLM Router/Triage 先输出结构化 `RouteDecision`。
 2. State Gate 检查当前状态是否满足该路径，例如分析/诊断/报告是否已有数据集。
-3. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或严格 JSON 文本协议返回 tool calls。
+3. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或 XML+JSON 文本协议返回 tool calls。
 4. 执行白名单工具，将结构化 Observation 回填给模型。
 5. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
 
@@ -104,7 +104,9 @@ LLM 调用会记录：
 
 API key 和 Authorization header 不能进入审计记录。
 
-Trace 调试台按案例聚合 AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，支持查看 timeline、展开脱敏 request/response，并导出脱敏 JSON。
+Provider 负责各自的工具规格、消息编码、Observation 回填和模型输出解析；Runtime 只消费统一的 `LLMToolCall` 和最终回复，不判断具体工具协议。
+
+独立 Trace 调试台按案例聚合 AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，支持查看 timeline、展开脱敏 request/response，并导出脱敏 JSON。主诊断界面默认不请求 trace API。
 
 ## Memory
 

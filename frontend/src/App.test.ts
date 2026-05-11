@@ -8,6 +8,7 @@ describe("App", () => {
     expect(wrapper.text()).toContain("半导体设备性能诊断");
     expect(wrapper.text()).toContain("辅助诊断对话");
     expect(wrapper.text()).toContain("证据与报告");
+    expect(wrapper.text()).not.toContain("Agent 调试台");
   });
 
   it("creates a case through the API", async () => {
@@ -127,12 +128,13 @@ describe("App", () => {
     const wrapper = mount(App);
     await wrapper.find("button").trigger("click");
     await flushPromises();
-    const refreshButton = wrapper.findAll("button").find((button) => button.text() === "刷新");
-    await refreshButton?.trigger("click");
+    const debugButton = wrapper.findAll("button").find((button) => button.text() === "调试 Trace");
+    await debugButton?.trigger("click");
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith("/api/cases/case_1/trace");
+    expect(wrapper.text()).toContain("Agent 调试台");
     expect(wrapper.text()).toContain("1 · observe");
-    expect(wrapper.text()).toContain("LLM 调用 1 次");
+    expect(wrapper.text()).toContain("openai_compatible / mock");
   });
 });

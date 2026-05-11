@@ -21,7 +21,7 @@
 - 真实 LLM 通过 OpenAI-compatible `/v1/chat/completions` 接入，支持原生 tool calling 和 prompt-xml-json 文本工具协议两种模式。
 - LLM 上下文只发送案例摘要、Artifact 元数据、Evidence 和工具结果摘要，不发送原始文件行级数据。
 - 完整记录 LLM prompt/request/response 审计内容，密钥和认证头不得落库。
-- 系统必须提供 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出。
+- 系统必须提供独立 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出；主诊断界面默认只展示用户可见信息。
 - 原始文件保留版本，结构化性能指标长期进入 ClickHouse。
 - 元数据先用 SQLite 起步，并保持 PostgreSQL 迁移兼容。
 - RAG 通过抽象接口接入，长期支持可替换向量库。

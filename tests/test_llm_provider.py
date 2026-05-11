@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from semidiag.agent import AgentRuntime
-from semidiag.agent.llm import LLMError, OpenAICompatibleProvider, OpenAIPromptXmlJsonProvider
+from semidiag.agent.llm import LLMError, OpenAINativeToolProvider, OpenAIPromptXmlJsonProvider, PromptXmlJsonParser
 from semidiag.config import LLMConfig
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
@@ -116,7 +116,7 @@ def test_openai_compatible_tool_call_flow(tmp_path):
             json={"choices": [{"message": {"role": "assistant", "content": "诊断完成，需工程师确认。"}}]},
         )
 
-    provider = OpenAICompatibleProvider(
+    provider = OpenAINativeToolProvider(
         LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1", model="mock-model", api_key="secret")
     )
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -223,7 +223,7 @@ def test_react_loop_can_continue_after_inspection(tmp_path):
             )
         return httpx.Response(500, text="unexpected")
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
 
@@ -344,6 +344,51 @@ def test_prompt_xml_json_tool_mode_rejects_invalid_xml():
         provider.plan_tool_calls(messages=[{"role": "user", "content": "x"}], tools=[])
 
 
+def test_prompt_xml_json_parser_rejects_ambiguous_or_invalid_payloads():
+    with pytest.raises(LLMError, match="both tool_calls and final_answer"):
+        PromptXmlJsonParser.parse("<tool_calls>[]</tool_calls><final_answer>x</final_answer>")
+    with pytest.raises(LLMError, match="valid JSON"):
+        PromptXmlJsonParser.parse("<tool_calls>{bad</tool_calls>")
+    with pytest.raises(LLMError, match="non-empty JSON array"):
+        PromptXmlJsonParser.parse("<tool_calls>[]</tool_calls>")
+    with pytest.raises(LLMError, match="arguments must be an object"):
+        PromptXmlJsonParser.parse('<tool_calls>[{"name":"inspect_dataset","arguments":[]}]</tool_calls>')
+
+
+def test_prompt_xml_json_provider_repairs_malformed_first_output():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "我先看一下"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": '<tool_calls>[{"id":"call_1","name":"inspect_dataset","arguments":{}}]</tool_calls>',
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAIPromptXmlJsonProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")
+    )
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = provider.plan_tool_calls(messages=[{"role": "user", "content": "x"}], tools=[])
+
+    assert calls == 2
+    assert result.tool_calls[0].name == "inspect_dataset"
+    assert result.metadata["repair_reason"]
+
+
 def test_react_loop_returns_tool_errors_as_observations(tmp_path):
     tool_round = 0
 
@@ -401,7 +446,7 @@ def test_react_loop_returns_tool_errors_as_observations(tmp_path):
             return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "需要先完成指标画像。"}}]})
         return httpx.Response(500, text="unexpected")
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
 
@@ -434,7 +479,7 @@ def test_openai_compatible_invalid_tool_arguments_raise_error():
             },
         )
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
 
     with pytest.raises(LLMError, match="invalid tool arguments"):
@@ -442,7 +487,7 @@ def test_openai_compatible_invalid_tool_arguments_raise_error():
 
 
 def test_openai_compatible_http_error_is_mapped():
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(500, text="boom")))
 
     with pytest.raises(LLMError, match="LLM HTTP error 500"):
@@ -484,7 +529,7 @@ def test_runtime_returns_llm_content_when_no_tool_calls(tmp_path):
             json={"choices": [{"message": {"role": "assistant", "content": "请先上传设备性能数据文件。"}}]},
         )
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     case = repository.create_case("No dataset")
@@ -522,7 +567,7 @@ def test_diagnosis_without_dataset_is_blocked_after_llm_route(tmp_path):
             },
         )
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     case = repository.create_case("No dataset")
@@ -558,7 +603,7 @@ def test_user_visible_response_sanitizes_internal_ids(tmp_path):
             content = "当前 case_secret123 可以使用 ds_secret456，结果见 art_secret789。"
         return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": content}}]})
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     case = repository.create_case("ID sanitize")
@@ -615,7 +660,7 @@ def test_user_visible_response_removes_tool_call_markup(tmp_path):
             content = "已完成解析。\n<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"x\"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>"
         return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": content}}]})
 
-    provider = OpenAICompatibleProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
 

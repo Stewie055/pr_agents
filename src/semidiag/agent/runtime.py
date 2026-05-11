@@ -119,7 +119,7 @@ class AgentRuntime:
             repository=self.repository,
             plugin=self.plugin,
         )
-        tools = self.registry.prompt_tools() if getattr(self.llm, "tool_mode", "") == "prompt_xml_json" else self.registry.openai_tools()
+        tools = self.llm.tool_specs(self.registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
 
@@ -143,7 +143,7 @@ class AgentRuntime:
                     case_id=state.case_id,
                     step_index=step_index,
                     phase="finalize",
-                    llm_metadata=result.metadata,
+                    llm_metadata=self._step_llm_metadata(result.metadata),
                     stop_reason=state.stop_reason,
                     duration_ms=duration_ms,
                 )
@@ -196,7 +196,7 @@ class AgentRuntime:
                     for call in result.tool_calls
                 ],
                 observations=tool_observations,
-                llm_metadata=result.metadata,
+                llm_metadata=self._step_llm_metadata(result.metadata),
                 stop_reason=state.stop_reason,
                 duration_ms=duration_ms,
             )
@@ -282,7 +282,7 @@ class AgentRuntime:
             step_index=state.step_count,
             phase="stop",
             observations=state.observations[-3:],
-            llm_metadata=result.metadata,
+            llm_metadata=self._step_llm_metadata(result.metadata),
             stop_reason=state.stop_reason,
         )
         return result.content or "已完成本轮分析，但模型未生成最终回复。请查看工具轨迹和证据结果。"
@@ -565,8 +565,7 @@ class AgentRuntime:
         try:
             result = self.llm.plan_tool_calls(messages=messages, tools=tools)
         except LLMError as exc:
-            error_request = {"messages": messages, "available_tools": tools} if getattr(self.llm, "tool_mode", "") == "prompt_xml_json" else {"messages": messages, "tools": tools}
-            self._record_llm_audit(case_id=case_id, request=error_request, error=str(exc))
+            self._record_llm_audit(case_id=case_id, request={"messages": messages, "tool_specs": tools}, error=str(exc))
             raise
         request_payload = result.metadata.get("request_payload")
         self._record_llm_audit(
@@ -601,6 +600,13 @@ class AgentRuntime:
                 duration_ms=duration_ms,
             )
         )
+
+    def _step_llm_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"request_payload", "raw_model_content"}
+        }
 
     def _call_llm_for_summary(self, *, case_id: str, messages: list[dict[str, Any]]):
         try:
