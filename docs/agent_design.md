@@ -17,7 +17,8 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 `AgentRuntime` 支持两种 LLM provider：
 
 - `StubLLMProvider`：未配置真实 LLM 时的离线模式，根据消息内容选择固定工具序列。
-- `OpenAICompatibleProvider`：调用 OpenAI-compatible `/v1/chat/completions`，支持 native tools 和 prompt-json 文本工具协议。
+- `OpenAINativeToolProvider`：调用 OpenAI-compatible `/v1/chat/completions`，使用原生 `tools/tool_choice`。
+- `OpenAIPromptXmlJsonProvider`：调用同一接口，但不发送 `tools/tool_choice`，使用 XML+JSON 文本工具协议。
 
 Stub 模式根据消息内容选择工具序列：
 
@@ -37,7 +38,7 @@ Stub 模式根据消息内容选择工具序列：
 
 模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
 
-`SEMIDIAG_LLM_TOOL_MODE=prompt_json` 用于未开启 auto-tool-choice 的部署。该模式不发送 `tools/tool_choice`，但 Runtime 仍解析成统一的 `LLMToolCall` 并复用同一套工具执行链路。
+`SEMIDIAG_LLM_TOOL_MODE=prompt_xml_json` 用于未开启 auto-tool-choice 的部署。该模式不发送 `tools/tool_choice`，通过 `<available_tools>` 注入工具列表，通过 `<tool_calls>` / `<final_answer>` 做动作边界，但 Runtime 仍解析成统一的 `LLMToolCall` 并复用同一套工具执行链路。
 
 ## Router And State Gate
 

@@ -33,12 +33,14 @@ Observation 不应包含完整原始文件内容。
 
 DeepSeek V4 thinking mode 会在 tool-call 轮次返回 `reasoning_content`。后续带 tool result 的请求必须把这段内容随 assistant tool-call message 原样传回。
 
-## Prompt-json Tool Mode
+## Prompt XML+JSON Tool Mode
 
-未开启 auto-tool-choice 的模型部署使用 `SEMIDIAG_LLM_TOOL_MODE=prompt_json`。该模式不发送 OpenAI `tools` 字段，而是要求模型输出严格 JSON：
+未开启 auto-tool-choice 的模型部署使用 `SEMIDIAG_LLM_TOOL_MODE=prompt_xml_json`。该模式不发送 OpenAI `tools` 字段，而是用 XML 做协议边界、JSON 承载工具列表和参数：
 
-- `action=tool_calls`: Runtime 解析 tool_calls 后执行白名单工具。
-- `action=final_answer`: Runtime 停止 ReAct loop 并清洗最终回复。
+- `<available_tools>`: 每轮由 ToolRegistry 动态生成工具清单。
+- `<tool_calls>`: Runtime 解析块内 JSON 数组后执行白名单工具。
+- `<observation>`: Runtime 将工具结果回灌给模型。
+- `<final_answer>`: Runtime 停止 ReAct loop 并清洗最终回复。
 
 Runtime 的工具执行、Observation、重复调用保护和 max step 策略与 native 模式一致。
 

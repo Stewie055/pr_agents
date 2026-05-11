@@ -69,7 +69,7 @@ def test_trace_api_returns_debug_data_with_redaction(tmp_path):
             step_index=1,
             phase="observe",
             observations=[{"summary": "ok"}],
-            llm_metadata={"tool_mode": "prompt_json"},
+            llm_metadata={"tool_mode": "prompt_xml_json"},
         )
     )
     state.repository.add_llm_audit_event(

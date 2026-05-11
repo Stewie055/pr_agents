@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class LLMConfig(BaseModel):
     provider: Literal["stub", "openai_compatible"] = "stub"
-    tool_mode: Literal["native", "prompt_json"] = "native"
+    tool_mode: Literal["native", "prompt_xml_json"] = "native"
     base_url: str = "http://localhost:8001/v1"
     api_key: str | None = None
     model: str = "local-diagnostic-model"

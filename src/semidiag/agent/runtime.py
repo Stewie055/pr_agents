@@ -119,7 +119,7 @@ class AgentRuntime:
             repository=self.repository,
             plugin=self.plugin,
         )
-        tools = self.registry.openai_tools()
+        tools = self.registry.prompt_tools() if getattr(self.llm, "tool_mode", "") == "prompt_xml_json" else self.registry.openai_tools()
         call_counts: dict[str, int] = {}
         final_content: str | None = None
 
@@ -149,10 +149,10 @@ class AgentRuntime:
                 )
                 break
 
-            assistant_tool_message = self._assistant_tool_message(result)
+            assistant_tool_message = self.llm.assistant_plan_message(result)
             state.messages.append(assistant_tool_message)
             tool_observations: list[dict[str, Any]] = []
-            tool_messages: list[dict[str, Any]] = []
+            observation_messages: list[dict[str, Any]] = []
 
             for call in result.tool_calls:
                 if self.registry.get_tool(call.name) is None:
@@ -183,13 +183,8 @@ class AgentRuntime:
                     }
                 tool_observations.append(observation)
                 state.observations.append(observation)
-                tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "name": call.name,
-                        "content": json.dumps(observation, ensure_ascii=False),
-                    }
+                observation_messages.append(
+                    {"tool_call_id": call.id, "tool_name": call.name, "observation": observation}
                 )
 
             self._record_agent_step(
@@ -206,7 +201,7 @@ class AgentRuntime:
                 duration_ms=duration_ms,
             )
 
-            state.messages.extend(tool_messages)
+            state.messages.extend(self.llm.tool_observation_messages(observation_messages))
             if final_content:
                 break
 
@@ -234,23 +229,6 @@ class AgentRuntime:
         )
         self.memory.update_midterm(state.case_id, content_out[:500])
         return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=content_out)
-
-    def _assistant_tool_message(self, result) -> dict[str, Any]:
-        message = {
-            "role": "assistant",
-            "content": result.content or "",
-            "tool_calls": [
-                {
-                    "id": call.id,
-                    "type": "function",
-                    "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
-                }
-                for call in result.tool_calls
-            ],
-        }
-        if "reasoning_content" in result.metadata:
-            message["reasoning_content"] = result.metadata["reasoning_content"]
-        return message
 
     def _prepare_tool_arguments(self, tool_name: str, arguments: dict[str, Any], active_dataset_id: str | None) -> dict[str, Any]:
         prepared = dict(arguments)
@@ -587,11 +565,13 @@ class AgentRuntime:
         try:
             result = self.llm.plan_tool_calls(messages=messages, tools=tools)
         except LLMError as exc:
-            self._record_llm_audit(case_id=case_id, request={"messages": messages, "tools": tools}, error=str(exc))
+            error_request = {"messages": messages, "available_tools": tools} if getattr(self.llm, "tool_mode", "") == "prompt_xml_json" else {"messages": messages, "tools": tools}
+            self._record_llm_audit(case_id=case_id, request=error_request, error=str(exc))
             raise
+        request_payload = result.metadata.get("request_payload")
         self._record_llm_audit(
             case_id=case_id,
-            request={"messages": messages, "tools": tools},
+            request=request_payload if isinstance(request_payload, dict) else {"messages": messages, "tools": tools},
             response=result.raw_response,
             duration_ms=int(result.metadata.get("duration_ms", 0)),
         )
@@ -628,9 +608,10 @@ class AgentRuntime:
         except LLMError as exc:
             self._record_llm_audit(case_id=case_id, request={"messages": messages}, error=str(exc))
             raise
+        request_payload = result.metadata.get("request_payload")
         self._record_llm_audit(
             case_id=case_id,
-            request={"messages": messages},
+            request=request_payload if isinstance(request_payload, dict) else {"messages": messages},
             response=result.raw_response,
             duration_ms=int(result.metadata.get("duration_ms", 0)),
         )

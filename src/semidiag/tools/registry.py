@@ -78,6 +78,19 @@ class ToolRegistry:
     def openai_tools(self) -> list[dict[str, Any]]:
         return [definition.as_openai_tool() for definition in self.list_tools()]
 
+    def prompt_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": definition.name,
+                "description": definition.description,
+                "input_schema": definition.input_schema or {"type": "object", "properties": {}},
+                "output_schema": definition.output_schema or {"type": "object", "properties": {}},
+                "risk_level": definition.risk_level,
+                "usage_hint": definition.description,
+            }
+            for definition in self.list_tools()
+        ]
+
     def run(self, name: str, context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
         if name not in self._handlers:
             raise KeyError(f"Tool not registered: {name}")

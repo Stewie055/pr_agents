@@ -44,18 +44,30 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 真实 LLM 支持两种工具协议：
 
 - `SEMIDIAG_LLM_TOOL_MODE=native`: 使用 OpenAI `tools/tool_choice`。
-- `SEMIDIAG_LLM_TOOL_MODE=prompt_json`: 不发送 `tools/tool_choice`，在 prompt 中注入工具清单，要求模型输出严格 JSON。
+- `SEMIDIAG_LLM_TOOL_MODE=prompt_xml_json`: 不发送 `tools/tool_choice`，在 prompt 中注入 XML 包裹的工具清单，要求模型用 XML 标签选择动作、用 JSON 承载参数。
 
-`prompt_json` 模式输出格式：
+`prompt_xml_json` 模式工具清单格式：
 
-```json
-{"action":"tool_calls","tool_calls":[{"id":"call_1","name":"inspect_dataset","arguments":{}}]}
+```xml
+<available_tools>
+[{"name":"inspect_dataset","description":"...","input_schema":{},"output_schema":{},"risk_level":"low","usage_hint":"..."}]
+</available_tools>
 ```
 
-或：
+工具调用格式：
 
-```json
-{"action":"final_answer","content":"最终中文回复"}
+```xml
+<tool_calls>
+[{"id":"call_1","name":"inspect_dataset","arguments":{}}]
+</tool_calls>
+```
+
+最终回答格式：
+
+```xml
+<final_answer>
+最终中文回复
+</final_answer>
 ```
 
 两种模式共享同一个 ReAct runtime：
@@ -63,11 +75,11 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 - 第一阶段先由 LLM Router 输出 `RouteDecision` JSON。
 - State Gate 通过后，分析/诊断/报告路径才进入 tool calling。
 - 系统只暴露 `ToolRegistry` 中注册的白名单工具。
-- `ToolDefinition.input_schema` 会转换为 OpenAI function parameters。
-- LLM 返回未知工具、非法参数或非法 JSON 时，请求失败并写入审计。
+- `ToolDefinition.input_schema` 会转换为 OpenAI function parameters 或 prompt XML 中的 tool schema。
+- LLM 返回未知工具、非法参数、非法 JSON 或非法 XML 时，请求失败并写入审计。
 - DeepSeek V4 thinking mode 的 tool-call 轮次会返回 `reasoning_content`；系统会在回传 tool result 给模型时保留该字段，避免 DeepSeek 返回 400。
 - ReAct loop 的每一轮 tool-call 都会保留并回传 DeepSeek `reasoning_content`。
-- `prompt_json` 模式会把历史 tool role 和 assistant tool_calls 转成普通文本消息，兼容未开启 auto-tool-choice 的部署。
+- `prompt_xml_json` 模式会把历史工具计划和 observation 转成普通 XML 文本消息，兼容未开启 auto-tool-choice 的部署。
 
 ## Context Policy
 

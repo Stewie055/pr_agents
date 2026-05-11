@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from semidiag.agent import AgentRuntime
-from semidiag.agent.llm import LLMError, OpenAICompatibleProvider
+from semidiag.agent.llm import LLMError, OpenAICompatibleProvider, OpenAIPromptXmlJsonProvider
 from semidiag.config import LLMConfig
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
@@ -237,7 +237,7 @@ def test_react_loop_can_continue_after_inspection(tmp_path):
     assert any("chamber_temperature" in json.dumps(step.observations, ensure_ascii=False) for step in steps)
 
 
-def test_prompt_json_tool_mode_runs_react_without_native_tools(tmp_path):
+def test_prompt_xml_json_tool_mode_runs_react_without_native_tools(tmp_path):
     requests: list[dict] = []
     tool_round = 0
 
@@ -271,7 +271,8 @@ def test_prompt_json_tool_mode_runs_react_without_native_tools(tmp_path):
             )
         assert "tools" not in body
         assert "tool_choice" not in body
-        assert "严格 JSON 文本协议" in body["messages"][0]["content"]
+        assert "<available_tools>" in body["messages"][0]["content"]
+        assert "inspect_dataset" in body["messages"][0]["content"]
         tool_round += 1
         if tool_round == 1:
             return httpx.Response(
@@ -281,21 +282,26 @@ def test_prompt_json_tool_mode_runs_react_without_native_tools(tmp_path):
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": json.dumps(
-                                    {
-                                        "action": "tool_calls",
-                                        "tool_calls": [
-                                            {"id": "call_inspect", "name": "inspect_dataset", "arguments": {}},
-                                            {"id": "call_profile", "name": "profile_dataset", "arguments": {}},
-                                        ],
-                                    }
+                                "content": (
+                                    "<tool_calls>\n"
+                                    + json.dumps(
+                                        [
+                                                {"id": "call_inspect", "name": "inspect_dataset", "arguments": {}},
+                                                {"id": "call_profile", "name": "profile_dataset", "arguments": {}},
+                                        ]
+                                    )
+                                    + "\n</tool_calls>"
                                 ),
                             }
                         }
                     ]
                 },
             )
-        assert any("TOOL_OBSERVATION" in item["content"] for item in body["messages"])
+        assert any("<observation" in item["content"] for item in body["messages"])
+        previous_plan = [item for item in body["messages"] if "previous_tool_calls_already_executed" in item["content"]]
+        assert previous_plan
+        assert previous_plan[0]["role"] == "user"
+        assert not any(item.get("role") == "tool" for item in body["messages"])
         return httpx.Response(
             200,
             json={
@@ -303,30 +309,30 @@ def test_prompt_json_tool_mode_runs_react_without_native_tools(tmp_path):
                     {
                         "message": {
                             "role": "assistant",
-                            "content": json.dumps({"action": "final_answer", "content": "已完成 prompt-json 诊断。"}),
+                            "content": "<final_answer>\n已完成 **prompt-xml-json** 诊断。\n</final_answer>",
                         }
                     }
                 ]
             },
         )
 
-    provider = OpenAICompatibleProvider(
-        LLMConfig(provider="openai_compatible", tool_mode="prompt_json", base_url="http://llm.test/v1")
+    provider = OpenAIPromptXmlJsonProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")
     )
     provider.client = httpx.Client(transport=httpx.MockTransport(handler))
     runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
 
     result = runtime.handle_user_message(case_id=case.id, content="请诊断", dataset_id=dataset.id)
 
-    assert result.message.content == "已完成 prompt-json 诊断。"
+    assert result.message.content == "已完成 **prompt-xml-json** 诊断。"
     assert [trace.tool_name for trace in result.tool_traces] == ["inspect_dataset", "profile_dataset"]
-    assert result.message.metadata["llm_tool_mode"] == "prompt_json"
+    assert result.message.metadata["llm_tool_mode"] == "prompt_xml_json"
     assert all("tools" not in request and "tool_choice" not in request for request in requests[1:])
 
 
-def test_prompt_json_tool_mode_rejects_invalid_json():
-    provider = OpenAICompatibleProvider(
-        LLMConfig(provider="openai_compatible", tool_mode="prompt_json", base_url="http://llm.test/v1")
+def test_prompt_xml_json_tool_mode_rejects_invalid_xml():
+    provider = OpenAIPromptXmlJsonProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")
     )
     provider.client = httpx.Client(
         transport=httpx.MockTransport(
@@ -334,7 +340,7 @@ def test_prompt_json_tool_mode_rejects_invalid_json():
         )
     )
 
-    with pytest.raises(LLMError, match="strict JSON"):
+    with pytest.raises(LLMError, match="tool_calls or final_answer"):
         provider.plan_tool_calls(messages=[{"role": "user", "content": "x"}], tools=[])
 
 
