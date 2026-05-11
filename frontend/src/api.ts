@@ -31,7 +31,32 @@ export type AgentStep = {
   id: string;
   step_index: number;
   phase: string;
+  tool_calls?: Array<Record<string, unknown>>;
+  observations?: Array<Record<string, unknown>>;
+  llm_metadata?: Record<string, unknown>;
   stop_reason?: string | null;
+  duration_ms?: number;
+};
+
+export type LLMAuditEvent = {
+  id: string;
+  provider: string;
+  model: string;
+  request: Record<string, unknown>;
+  response?: Record<string, unknown> | null;
+  error?: string | null;
+  duration_ms: number;
+  created_at: string;
+};
+
+export type CaseTrace = {
+  case: DiagnosticCase;
+  messages: AgentMessage[];
+  agent_steps: AgentStep[];
+  tool_traces: ToolTrace[];
+  llm_audit_events: LLMAuditEvent[];
+  artifacts: Array<{ id: string; kind: string; title: string; summary: string; created_at: string }>;
+  evidence: Array<{ id: string; type: string; title: string; summary: string; created_at: string }>;
 };
 
 export type CaseSnapshot = {
@@ -96,4 +121,17 @@ export async function sendMessage(caseId: string, content: string, datasetId?: s
     artifacts: Artifact[];
     tool_traces: ToolTrace[];
   }>(response);
+}
+
+export async function getCaseTrace(caseId: string): Promise<CaseTrace> {
+  const response = await fetch(`/api/cases/${caseId}/trace`);
+  return parseResponse<CaseTrace>(response);
+}
+
+export async function exportCaseTrace(caseId: string): Promise<Blob> {
+  const response = await fetch(`/api/cases/${caseId}/trace/export`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.blob();
 }

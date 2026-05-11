@@ -17,7 +17,7 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 `AgentRuntime` 支持两种 LLM provider：
 
 - `StubLLMProvider`：未配置真实 LLM 时的离线模式，根据消息内容选择固定工具序列。
-- `OpenAICompatibleProvider`：调用 OpenAI-compatible `/v1/chat/completions`，使用 tool calling 选择工具。
+- `OpenAICompatibleProvider`：调用 OpenAI-compatible `/v1/chat/completions`，支持 native tools 和 prompt-json 文本工具协议。
 
 Stub 模式根据消息内容选择工具序列：
 
@@ -31,11 +31,13 @@ Stub 模式根据消息内容选择工具序列：
 
 1. LLM Router/Triage 先输出结构化 `RouteDecision`。
 2. State Gate 检查当前状态是否满足该路径，例如分析/诊断/报告是否已有数据集。
-3. 需要工具时进入 ReAct loop，让模型返回 tool calls。
+3. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或严格 JSON 文本协议返回 tool calls。
 4. 执行白名单工具，将结构化 Observation 回填给模型。
 5. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
 
 模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
+
+`SEMIDIAG_LLM_TOOL_MODE=prompt_json` 用于未开启 auto-tool-choice 的部署。该模式不发送 `tools/tool_choice`，但 Runtime 仍解析成统一的 `LLMToolCall` 并复用同一套工具执行链路。
 
 ## Router And State Gate
 
@@ -95,11 +97,13 @@ Router 由 LLM 完成，不使用规则分类器代替语义判断。`RouteDecis
 LLM 调用会记录：
 
 - provider 和 model。
-- messages 和 tools。
+- messages、tool mode 和工具清单。
 - tool calls / response。
 - 错误和耗时。
 
 API key 和 Authorization header 不能进入审计记录。
+
+Trace 调试台按案例聚合 AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，支持查看 timeline、展开脱敏 request/response，并导出脱敏 JSON。
 
 ## Memory
 

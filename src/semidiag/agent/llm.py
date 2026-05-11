@@ -33,6 +33,7 @@ class LLMResult(BaseModel):
 class LLMProvider(Protocol):
     provider_name: str
     model: str
+    tool_mode: str
 
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         raise NotImplementedError
@@ -46,6 +47,7 @@ class StubLLMProvider:
 
     provider_name = "stub"
     model = "deterministic-stub"
+    tool_mode = "stub"
 
     def plan_tools(self, message: str, has_dataset: bool) -> list[str]:
         normalized = message.lower()
@@ -92,10 +94,125 @@ class OpenAICompatibleProvider:
         return self.config.model
 
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+        if self.config.tool_mode == "prompt_json":
+            return self._plan_tool_calls_with_prompt_json(messages=messages, tools=tools)
         return self._chat(messages=messages, tools=tools, tool_choice="auto")
 
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
-        return self._chat(messages=messages, tools=None, tool_choice=None)
+        return self._chat(messages=self._normalize_messages_for_model(messages), tools=None, tool_choice=None)
+
+    @property
+    def tool_mode(self) -> str:
+        return self.config.tool_mode
+
+    def _plan_tool_calls_with_prompt_json(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> LLMResult:
+        prompt_messages = self._prompt_tool_messages(messages=messages, tools=tools)
+        result = self._chat(messages=prompt_messages, tools=None, tool_choice=None)
+        payload = self._parse_prompt_json_tool_result(result.content)
+        action = payload.get("action")
+        if action == "final_answer":
+            content = payload.get("content")
+            if not isinstance(content, str):
+                raise LLMError("Prompt-json tool mode final_answer.content must be a string", status_code=502)
+            result.content = content
+            result.tool_calls = []
+            result.metadata["tool_mode"] = self.tool_mode
+            return result
+        if action != "tool_calls":
+            raise LLMError("Prompt-json tool mode action must be tool_calls or final_answer", status_code=502)
+
+        raw_calls = payload.get("tool_calls")
+        if not isinstance(raw_calls, list) or not raw_calls:
+            raise LLMError("Prompt-json tool mode tool_calls must be a non-empty list", status_code=502)
+        calls: list[LLMToolCall] = []
+        for index, item in enumerate(raw_calls, start=1):
+            if not isinstance(item, dict):
+                raise LLMError("Prompt-json tool mode tool call must be an object", status_code=502)
+            name = item.get("name")
+            arguments = item.get("arguments") or {}
+            if not isinstance(name, str) or not name:
+                raise LLMError("Prompt-json tool mode tool call name must be a string", status_code=502)
+            if not isinstance(arguments, dict):
+                raise LLMError(f"Prompt-json tool mode arguments must be an object for {name}", status_code=502)
+            calls.append(LLMToolCall(id=str(item.get("id") or f"call_{index}"), name=name, arguments=arguments))
+        result.content = ""
+        result.tool_calls = calls
+        result.metadata["tool_mode"] = self.tool_mode
+        return result
+
+    def _parse_prompt_json_tool_result(self, content: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise LLMError("Prompt-json tool mode requires strict JSON output", status_code=502) from exc
+        if not isinstance(payload, dict):
+            raise LLMError("Prompt-json tool mode output must be a JSON object", status_code=502)
+        return payload
+
+    def _prompt_tool_messages(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        tool_specs = []
+        for item in tools:
+            function = item.get("function") or {}
+            tool_specs.append(
+                {
+                    "name": function.get("name"),
+                    "description": function.get("description"),
+                    "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        protocol = {
+            "role": "system",
+            "content": (
+                "当前模型部署不支持原生 tools/tool_choice。你必须用严格 JSON 文本协议选择工具或结束回答。"
+                "不要输出 Markdown、代码块、解释文字或额外字段。"
+                "需要工具时只输出："
+                '{"action":"tool_calls","tool_calls":[{"id":"call_1","name":"inspect_dataset","arguments":{}}]}'
+                "。可以一次请求多个工具。"
+                "已有观察足够回答时只输出："
+                '{"action":"final_answer","content":"最终中文回复"}'
+                "。可用工具 JSON："
+                f"{json.dumps(tool_specs, ensure_ascii=False)}"
+            ),
+        }
+        return [protocol] + self._normalize_messages_for_model(messages)
+
+    def _normalize_messages_for_model(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self.config.tool_mode != "prompt_json":
+            return messages
+        normalized: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                normalized.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "TOOL_OBSERVATION "
+                            f"name={message.get('name') or ''} "
+                            f"tool_call_id={message.get('tool_call_id') or ''}: "
+                            f"{message.get('content') or ''}"
+                        ),
+                    }
+                )
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                normalized.append(
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "TOOL_PLAN "
+                            + json.dumps(message.get("tool_calls") or [], ensure_ascii=False)
+                        ),
+                    }
+                )
+                continue
+            normalized.append({"role": role, "content": message.get("content") or ""})
+        return normalized
 
     def _chat(
         self,
@@ -154,7 +271,12 @@ class OpenAICompatibleProvider:
             )
 
         duration_ms = int((perf_counter() - started) * 1000)
-        metadata: dict[str, Any] = {"provider": self.provider_name, "model": self.model, "duration_ms": duration_ms}
+        metadata: dict[str, Any] = {
+            "provider": self.provider_name,
+            "model": self.model,
+            "tool_mode": self.tool_mode,
+            "duration_ms": duration_ms,
+        }
         if "reasoning_content" in message:
             metadata["reasoning_content"] = message.get("reasoning_content") or ""
         return LLMResult(

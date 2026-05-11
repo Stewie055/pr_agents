@@ -13,6 +13,8 @@
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
 - ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复
+- LLM 工具调用支持 native tools 与 prompt-json 文本协议两种模式
+- Trace 调试台，可查看 ReAct 步骤、工具轨迹、LLM 审计并导出脱敏 JSON
 - 通用 CSV 性能数据示例诊断
 - 结构化 Artifact、Evidence、DiagnosisConclusion 和报告草稿
 - 后端 pytest 与前端 Vitest 自动化测试
@@ -57,12 +59,15 @@ cp .env.example .env
 
 ```bash
 SEMIDIAG_LLM_PROVIDER=openai_compatible
+SEMIDIAG_LLM_TOOL_MODE=native
 SEMIDIAG_LLM_BASE_URL=https://api.deepseek.com
 SEMIDIAG_LLM_MODEL=deepseek-v4-flash
 SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 ```
 
 不想连接真实模型时，把 `SEMIDIAG_LLM_PROVIDER` 改成 `stub`。
+
+如果模型部署不支持 OpenAI `tools/tool_choice`，把 `SEMIDIAG_LLM_TOOL_MODE` 改成 `prompt_json`。该模式不会向 LLM 请求体发送 `tools` 字段，而是用严格 JSON 文本协议驱动同一个 ReAct loop。
 
 后端：
 
@@ -103,6 +108,7 @@ npm run build
 3. 发送“请分析这份设备性能数据，给出诊断、证据和建议”。
 4. Agent 通过 ReAct loop 调用字段检查、画像、趋势图、诊断等工具。
 5. WebUI 展示工具轨迹、Artifact、证据和报告草稿。
+6. 需要排查 Agent 行为时，在右侧 Trace 调试台刷新步骤，或导出脱敏 JSON。
 
 Agent 会自动使用当前案例最新上传的数据集。界面和回复默认不展示内部 case/dataset/artifact id，也不会要求用户手动输入 dataset id。
 
@@ -114,3 +120,4 @@ Agent 会自动使用当前案例最新上传的数据集。界面和回复默�
 - [Service and Tool Contract](docs/service_tool_contract.md)
 - [Development Guide](docs/dev_guide.md)
 - [LLM Provider](docs/llm_provider.md)
+- [ReAct Agent Loop](docs/react_agent_loop.md)

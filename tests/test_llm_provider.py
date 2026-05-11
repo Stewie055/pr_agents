@@ -237,6 +237,107 @@ def test_react_loop_can_continue_after_inspection(tmp_path):
     assert any("chamber_temperature" in json.dumps(step.observations, ensure_ascii=False) for step in steps)
 
 
+def test_prompt_json_tool_mode_runs_react_without_native_tools(tmp_path):
+    requests: list[dict] = []
+    tool_round = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal tool_round
+        body = json.loads(request.content.decode())
+        requests.append(body)
+        if "路由器" in body["messages"][0]["content"]:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "intent": "diagnosis",
+                                        "requires_dataset": True,
+                                        "requires_knowledge": False,
+                                        "target_workflow": None,
+                                        "user_goal": "诊断设备性能异常",
+                                        "response_style": "normal",
+                                        "reason": "用户要求诊断",
+                                    }
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        assert "tools" not in body
+        assert "tool_choice" not in body
+        assert "严格 JSON 文本协议" in body["messages"][0]["content"]
+        tool_round += 1
+        if tool_round == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "action": "tool_calls",
+                                        "tool_calls": [
+                                            {"id": "call_inspect", "name": "inspect_dataset", "arguments": {}},
+                                            {"id": "call_profile", "name": "profile_dataset", "arguments": {}},
+                                        ],
+                                    }
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        assert any("TOOL_OBSERVATION" in item["content"] for item in body["messages"])
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"action": "final_answer", "content": "已完成 prompt-json 诊断。"}),
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_json", base_url="http://llm.test/v1")
+    )
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
+
+    result = runtime.handle_user_message(case_id=case.id, content="请诊断", dataset_id=dataset.id)
+
+    assert result.message.content == "已完成 prompt-json 诊断。"
+    assert [trace.tool_name for trace in result.tool_traces] == ["inspect_dataset", "profile_dataset"]
+    assert result.message.metadata["llm_tool_mode"] == "prompt_json"
+    assert all("tools" not in request and "tool_choice" not in request for request in requests[1:])
+
+
+def test_prompt_json_tool_mode_rejects_invalid_json():
+    provider = OpenAICompatibleProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_json", base_url="http://llm.test/v1")
+    )
+    provider.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "not json"}}]})
+        )
+    )
+
+    with pytest.raises(LLMError, match="strict JSON"):
+        provider.plan_tool_calls(messages=[{"role": "user", "content": "x"}], tools=[])
+
+
 def test_react_loop_returns_tool_errors_as_observations(tmp_path):
     tool_round = 0
 

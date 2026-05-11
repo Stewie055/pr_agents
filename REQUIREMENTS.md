@@ -18,9 +18,10 @@
 - 高风险动作必须有人确认，包括代码执行、数据写入、Workflow 发布、正式报告发布和处置建议确认。
 - Workflow 是核心能力，支持从一次诊断沉淀为可复用流程，并支持批处理和定时报告。
 - LLM 内网/本地优先，敏感设备数据默认不出内网。
-- 真实 LLM 通过 OpenAI-compatible `/v1/chat/completions` 接入，使用 tool calling 选择白名单工具。
+- 真实 LLM 通过 OpenAI-compatible `/v1/chat/completions` 接入，支持原生 tool calling 和 prompt-json 文本工具协议两种模式。
 - LLM 上下文只发送案例摘要、Artifact 元数据、Evidence 和工具结果摘要，不发送原始文件行级数据。
 - 完整记录 LLM prompt/request/response 审计内容，密钥和认证头不得落库。
+- 系统必须提供 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出。
 - 原始文件保留版本，结构化性能指标长期进入 ClickHouse。
 - 元数据先用 SQLite 起步，并保持 PostgreSQL 迁移兼容。
 - RAG 通过抽象接口接入，长期支持可替换向量库。
@@ -37,9 +38,11 @@
 - CSV demo diagnostic service。
 - Stub LLM provider。
 - OpenAI-compatible LLM provider。
+- Native tools / prompt-json LLM tool mode。
 - LLM prompt/request/response audit。
 - LLM Router/Triage and deterministic State Gate。
 - ReAct multi-step tool loop and AgentStepTrace。
+- Trace debug API and WebUI debug console。
 - Agent runtime and Tool Registry。
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.

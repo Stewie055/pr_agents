@@ -19,6 +19,7 @@ cp .env.example .env
 
 ```bash
 SEMIDIAG_LLM_PROVIDER=openai_compatible
+SEMIDIAG_LLM_TOOL_MODE=native
 SEMIDIAG_LLM_BASE_URL=http://localhost:8001/v1
 SEMIDIAG_LLM_MODEL=local-diagnostic-model
 SEMIDIAG_LLM_API_KEY=change-me
@@ -30,6 +31,7 @@ SEMIDIAG_LLM_TEMPERATURE=0.1
 
 ```bash
 SEMIDIAG_LLM_PROVIDER=openai_compatible
+SEMIDIAG_LLM_TOOL_MODE=native
 SEMIDIAG_LLM_BASE_URL=https://api.deepseek.com
 SEMIDIAG_LLM_MODEL=deepseek-v4-flash
 SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
@@ -39,7 +41,24 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 
 ## Tool Calling
 
-真实 LLM 使用 OpenAI tool calling：
+真实 LLM 支持两种工具协议：
+
+- `SEMIDIAG_LLM_TOOL_MODE=native`: 使用 OpenAI `tools/tool_choice`。
+- `SEMIDIAG_LLM_TOOL_MODE=prompt_json`: 不发送 `tools/tool_choice`，在 prompt 中注入工具清单，要求模型输出严格 JSON。
+
+`prompt_json` 模式输出格式：
+
+```json
+{"action":"tool_calls","tool_calls":[{"id":"call_1","name":"inspect_dataset","arguments":{}}]}
+```
+
+或：
+
+```json
+{"action":"final_answer","content":"最终中文回复"}
+```
+
+两种模式共享同一个 ReAct runtime：
 
 - 第一阶段先由 LLM Router 输出 `RouteDecision` JSON。
 - State Gate 通过后，分析/诊断/报告路径才进入 tool calling。
@@ -48,6 +67,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 - LLM 返回未知工具、非法参数或非法 JSON 时，请求失败并写入审计。
 - DeepSeek V4 thinking mode 的 tool-call 轮次会返回 `reasoning_content`；系统会在回传 tool result 给模型时保留该字段，避免 DeepSeek 返回 400。
 - ReAct loop 的每一轮 tool-call 都会保留并回传 DeepSeek `reasoning_content`。
+- `prompt_json` 模式会把历史 tool role 和 assistant tool_calls 转成普通文本消息，兼容未开启 auto-tool-choice 的部署。
 
 ## Context Policy
 
@@ -78,6 +98,8 @@ LLM prompt、request 和 response 会完整记录到 `llm_audit_events`。
 - 不记录 API key。
 - 不记录 Authorization header 明文。
 - 后续接入用户权限后，LLM audit 应纳入案例审计视图。
+
+WebUI Trace 调试台通过 `/api/cases/{case_id}/trace` 查看脱敏后的消息、AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，并通过 `/api/cases/{case_id}/trace/export` 导出 JSON。
 
 ## Testing
 

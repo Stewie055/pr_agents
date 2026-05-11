@@ -92,4 +92,47 @@ describe("App", () => {
 
     expect(wrapper.text()).toContain("模型服务暂时不可用");
   });
+
+  it("loads the trace debug timeline on demand", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          case: { id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" },
+          datasets: [],
+          messages: [],
+          artifacts: [],
+          tool_traces: [],
+          agent_steps: []
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          case: { id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" },
+          messages: [],
+          artifacts: [],
+          evidence: [],
+          tool_traces: [],
+          agent_steps: [{ id: "step_1", step_index: 1, phase: "observe", duration_ms: 8 }],
+          llm_audit_events: [{ id: "llm_1", provider: "openai_compatible", model: "mock", request: {}, response: {}, duration_ms: 8, created_at: "now" }]
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await wrapper.find("button").trigger("click");
+    await flushPromises();
+    const refreshButton = wrapper.findAll("button").find((button) => button.text() === "刷新");
+    await refreshButton?.trigger("click");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/cases/case_1/trace");
+    expect(wrapper.text()).toContain("1 · observe");
+    expect(wrapper.text()).toContain("LLM 调用 1 次");
+  });
 });

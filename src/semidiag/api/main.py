@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from semidiag.agent import AgentRuntime
@@ -31,6 +33,69 @@ class AppState:
         self.file_store = LocalFileStore(root_path / "files")
         llm_provider = build_llm_provider(load_llm_config())
         self.agent = AgentRuntime(self.repository, registry=build_default_registry(), llm=llm_provider)
+
+
+SENSITIVE_KEYS = {"authorization", "api_key", "apikey", "token", "secret", "password"}
+MAX_TRACE_STRING_LENGTH = 4000
+
+
+def redact_trace_value(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if any(secret in str(key).lower() for secret in SENSITIVE_KEYS):
+                redacted[key] = "***"
+            else:
+                redacted[key] = redact_trace_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_trace_value(item) for item in value]
+    if isinstance(value, str) and len(value) > MAX_TRACE_STRING_LENGTH:
+        return {
+            "truncated": True,
+            "length": len(value),
+            "preview": value[:MAX_TRACE_STRING_LENGTH],
+        }
+    return value
+
+
+def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
+    case = repository.get_case(case_id)
+    if case is None:
+        raise KeyError(case_id)
+    llm_events = []
+    for event in repository.list_case_llm_audit_events(case_id):
+        payload = event.model_dump(mode="json")
+        payload["request"] = redact_trace_value(payload.get("request") or {})
+        payload["response"] = redact_trace_value(payload.get("response")) if payload.get("response") is not None else None
+        llm_events.append(payload)
+    return {
+        "case": case.model_dump(mode="json"),
+        "messages": [item.model_dump(mode="json") for item in repository.list_case_messages(case_id)],
+        "agent_steps": [item.model_dump(mode="json") for item in repository.list_case_agent_step_traces(case_id)],
+        "tool_traces": [item.model_dump(mode="json") for item in repository.list_case_tool_traces(case_id)],
+        "llm_audit_events": llm_events,
+        "artifacts": [
+            {
+                "id": item.id,
+                "kind": item.kind,
+                "title": item.title,
+                "summary": item.summary,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in repository.list_case_artifacts(case_id)
+        ],
+        "evidence": [
+            {
+                "id": item.id,
+                "type": item.evidence_type,
+                "title": item.title,
+                "summary": item.summary,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in repository.list_case_evidence(case_id)
+        ],
+    }
 
 
 def create_app(state: AppState | None = None) -> FastAPI:
@@ -70,6 +135,25 @@ def create_app(state: AppState | None = None) -> FastAPI:
             return current.repository.case_snapshot(case_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="case not found") from exc
+
+    @app.get("/api/cases/{case_id}/trace")
+    def get_case_trace(case_id: str, current=Depends(get_state)):
+        try:
+            return build_case_trace(case_id, current.repository)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="case not found") from exc
+
+    @app.get("/api/cases/{case_id}/trace/export")
+    def export_case_trace(case_id: str, current=Depends(get_state)):
+        try:
+            payload = build_case_trace(case_id, current.repository)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="case not found") from exc
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{case_id}-trace.json"'},
+        )
 
     @app.post("/api/cases/{case_id}/files")
     async def upload_file(

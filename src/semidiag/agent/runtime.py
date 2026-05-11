@@ -553,6 +553,7 @@ class AgentRuntime:
             "stop_reason": stop_reason,
             "llm_provider": provider or self.llm.provider_name,
             "llm_model": model or self.llm.model,
+            "llm_tool_mode": getattr(self.llm, "tool_mode", "unknown"),
         }
 
     def _stub_non_tool_reply(self, *, decision: RouteDecision, has_dataset: bool) -> str:

@@ -182,7 +182,9 @@ h3 {
 
 .artifact,
 .tool-trace li,
-.report article {
+.report article,
+.trace-timeline li,
+.llm-events article {
   border: 1px solid #dce4e7;
   border-radius: 8px;
   margin-bottom: 10px;
@@ -190,10 +192,62 @@ h3 {
 }
 
 .artifact span,
-.tool-trace span {
+.tool-trace span,
+.trace-timeline span,
+.llm-events span {
   color: #5f7f88;
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.trace-debug {
+  border-top: 1px solid #dce4e7;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.trace-debug-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.trace-debug-header div {
+  display: flex;
+  gap: 8px;
+}
+
+.trace-debug-header button {
+  padding: 7px 10px;
+}
+
+.trace-timeline {
+  list-style: none;
+  padding-left: 0;
+}
+
+.trace-timeline details,
+.llm-events details {
+  margin-top: 8px;
+}
+
+.trace-debug pre {
+  background: #182228;
+  border-radius: 6px;
+  color: #edf7f8;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.empty-trace {
+  color: #5f7f88;
+  font-size: 13px;
 }
 
 .error {

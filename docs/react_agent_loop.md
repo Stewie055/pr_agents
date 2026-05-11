@@ -33,6 +33,26 @@ Observation 不应包含完整原始文件内容。
 
 DeepSeek V4 thinking mode 会在 tool-call 轮次返回 `reasoning_content`。后续带 tool result 的请求必须把这段内容随 assistant tool-call message 原样传回。
 
+## Prompt-json Tool Mode
+
+未开启 auto-tool-choice 的模型部署使用 `SEMIDIAG_LLM_TOOL_MODE=prompt_json`。该模式不发送 OpenAI `tools` 字段，而是要求模型输出严格 JSON：
+
+- `action=tool_calls`: Runtime 解析 tool_calls 后执行白名单工具。
+- `action=final_answer`: Runtime 停止 ReAct loop 并清洗最终回复。
+
+Runtime 的工具执行、Observation、重复调用保护和 max step 策略与 native 模式一致。
+
+## Trace Debugging
+
+每轮 ReAct 会写入 AgentStepTrace。Trace 调试台聚合：
+
+- 路由和 stop reason。
+- LLM audit request/response、provider、model、tool mode、耗时和错误。
+- ToolCallTrace 和结构化 Observation。
+- Artifact/Evidence 摘要。
+
+Trace API 默认脱敏密钥和认证头，并截断超长文本。导出接口返回同样脱敏后的 JSON。
+
 ## User-Facing Output
 
-最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端展示最终回复、工具轨迹和 Artifact；完整 step trace 先保存在后端。
+最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端展示最终回复、工具轨迹和 Artifact；调试台按需展示完整 step trace。

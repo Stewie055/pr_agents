@@ -1,18 +1,32 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { createCase, getCase, sendMessage, uploadDataset, type Artifact, type CaseSnapshot } from "./api";
+import {
+  createCase,
+  exportCaseTrace,
+  getCase,
+  getCaseTrace,
+  sendMessage,
+  uploadDataset,
+  type Artifact,
+  type CaseSnapshot,
+  type CaseTrace
+} from "./api";
 
 const caseTitle = ref("设备性能异常诊断案例");
 const message = ref("请分析这份设备性能数据，给出诊断、证据和建议。");
 const loading = ref(false);
+const traceLoading = ref(false);
 const error = ref("");
 const snapshot = ref<CaseSnapshot | null>(null);
+const trace = ref<CaseTrace | null>(null);
 
 const activeDatasetId = computed(() => snapshot.value?.datasets.at(-1)?.id);
 const latestDatasetName = computed(() => snapshot.value?.datasets.at(-1)?.filename);
 const hasDataset = computed(() => Boolean(activeDatasetId.value));
 const artifacts = computed<Artifact[]>(() => snapshot.value?.artifacts ?? []);
 const report = computed(() => artifacts.value.find((item) => item.kind === "report"));
+const traceSteps = computed(() => trace.value?.agent_steps ?? snapshot.value?.agent_steps ?? []);
+const llmEvents = computed(() => trace.value?.llm_audit_events ?? []);
 const sendButtonText = computed(() => (loading.value ? (hasDataset.value ? "正在分析..." : "正在回复...") : hasDataset.value ? "发送并分析" : "发送"));
 const caseStateText = computed(() => {
   if (!snapshot.value) {
@@ -43,6 +57,10 @@ function renderMarkdown(value: string) {
   html = html.replace(/^- (.*)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
   return html.replace(/\n/g, "<br />");
+}
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value ?? {}, null, 2);
 }
 
 async function ensureCase() {
@@ -97,10 +115,47 @@ async function handleSend() {
     const caseId = await ensureCase();
     await sendMessage(caseId, message.value, activeDatasetId.value);
     snapshot.value = await getCase(caseId);
+    trace.value = null;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Agent 调用失败";
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadTrace() {
+  if (!snapshot.value) {
+    return;
+  }
+  traceLoading.value = true;
+  error.value = "";
+  try {
+    trace.value = await getCaseTrace(snapshot.value.case.id);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "加载 Trace 失败";
+  } finally {
+    traceLoading.value = false;
+  }
+}
+
+async function downloadTrace() {
+  if (!snapshot.value) {
+    return;
+  }
+  traceLoading.value = true;
+  error.value = "";
+  try {
+    const blob = await exportCaseTrace(snapshot.value.case.id);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "agent-trace.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "导出 Trace 失败";
+  } finally {
+    traceLoading.value = false;
   }
 }
 </script>
@@ -169,6 +224,42 @@ async function handleSend() {
             <p>{{ trace.result_summary }}</p>
           </li>
         </ol>
+      </section>
+
+      <section class="trace-debug">
+        <div class="trace-debug-header">
+          <h3>Trace 调试台</h3>
+          <div>
+            <button :disabled="!snapshot || traceLoading" @click="loadTrace">{{ traceLoading ? "加载中..." : "刷新" }}</button>
+            <button :disabled="!snapshot || traceLoading" @click="downloadTrace">导出 JSON</button>
+          </div>
+        </div>
+
+        <ol v-if="traceSteps.length" class="trace-timeline">
+          <li v-for="step in traceSteps" :key="step.id">
+            <strong>{{ step.step_index }} · {{ step.phase }}</strong>
+            <span>{{ step.duration_ms ?? 0 }} ms</span>
+            <p v-if="step.stop_reason">stop: {{ step.stop_reason }}</p>
+            <details v-if="step.tool_calls?.length || step.observations?.length || step.llm_metadata">
+              <summary>查看 step JSON</summary>
+              <pre>{{ formatJson(step) }}</pre>
+            </details>
+          </li>
+        </ol>
+        <p v-else class="empty-trace">暂无 Agent step trace。</p>
+
+        <details v-if="llmEvents.length" class="llm-events">
+          <summary>LLM 调用 {{ llmEvents.length }} 次</summary>
+          <article v-for="event in llmEvents" :key="event.id">
+            <strong>{{ event.provider }} / {{ event.model }}</strong>
+            <span>{{ event.duration_ms }} ms</span>
+            <p v-if="event.error">{{ event.error }}</p>
+            <details>
+              <summary>request / response</summary>
+              <pre>{{ formatJson({ request: event.request, response: event.response }) }}</pre>
+            </details>
+          </article>
+        </details>
       </section>
 
       <section>
