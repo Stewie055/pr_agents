@@ -13,6 +13,7 @@ from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
 from semidiag.infrastructure.file_store import LocalFileStore
+from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.tools import build_default_registry
@@ -32,6 +33,7 @@ class AppState:
     def __init__(self, root: Path | str = "var") -> None:
         root_path = Path(root)
         self.repository = SQLiteRepository(root_path / "semidiag.sqlite3")
+        self.metric_repository = SQLiteMetricRepository(root_path / "metrics.sqlite3")
         self.file_store = LocalFileStore(root_path / "files")
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
@@ -42,6 +44,7 @@ class AppState:
             registry=build_default_registry(),
             llm=llm_provider,
             plugin_registry=self.plugin_registry,
+            metric_repository=self.metric_repository,
         )
 
 

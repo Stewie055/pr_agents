@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from semidiag.domain import AnalysisArtifact, AuditEvent, Evidence, ToolCallTrace
+from semidiag.infrastructure.metrics import MetricPoint, MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import DiagnosticPlugin
 
@@ -37,6 +38,7 @@ class ToolContext:
     actor: str
     repository: SQLiteRepository
     plugin: DiagnosticPlugin
+    metric_repository: MetricRepository | None = None
 
 
 @dataclass
@@ -257,10 +259,29 @@ def _parse_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResul
         dataset_id=dataset.id,
         path=dataset.path,
     )
+    metric_point_count = 0
+    if context.metric_repository is not None:
+        points = [
+            MetricPoint(
+                case_id=context.case_id,
+                dataset_id=dataset.id,
+                metric_name=item["metric_name"],
+                sample_index=item["sample_index"],
+                value=item["value"],
+            )
+            for item in context.plugin.diagnostic_service().extract_metric_points(
+                case_id=context.case_id,
+                dataset_id=dataset.id,
+                path=dataset.path,
+            )
+        ]
+        metric_point_count = context.metric_repository.replace_dataset_points(dataset.id, points)
     return ToolResult(
-        summary=artifact.summary,
+        summary=f"{artifact.summary} Stored {metric_point_count} metric point(s)."
+        if context.metric_repository is not None
+        else artifact.summary,
         artifacts=[artifact],
-        payload={"artifact_id": artifact.id},
+        payload={"artifact_id": artifact.id, "metric_point_count": metric_point_count},
         observation=ToolObservation(
             tool_name="parse_dataset",
             summary=artifact.summary,
@@ -268,6 +289,7 @@ def _parse_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResul
                 "columns": artifact.data.get("columns", []),
                 "row_count": artifact.data.get("row_count", 0),
                 "preview": artifact.data.get("rows", [])[:5],
+                "metric_point_count": metric_point_count,
             },
             artifact_ids=[artifact.id],
             next_suggestions=["inspect_dataset", "profile_dataset"],

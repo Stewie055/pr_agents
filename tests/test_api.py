@@ -36,7 +36,13 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
 
 def test_api_case_upload_and_agent_message(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=build_default_registry(),
+        llm=StubLLMProvider(),
+        plugin=state.plugin,
+        metric_repository=state.metric_repository,
+    )
     app = create_app(state)
     client = TestClient(app)
 
@@ -60,6 +66,7 @@ def test_api_case_upload_and_agent_message(tmp_path):
     assert any(item["kind"] == "diagnosis" for item in body["artifacts"])
     assert any(item["kind"] == "chart" and item["data"]["render_type"] == "image" for item in body["artifacts"])
     assert any(trace["tool_name"] == "diagnose_performance" for trace in body["tool_traces"])
+    assert len(state.metric_repository.list_dataset_points(dataset_id)) == 20
 
     chart = next(item for item in body["artifacts"] if item["kind"] == "chart" and item["data"]["render_type"] == "image")
     chart_file = client.get(f"/api/artifacts/{chart['id']}/file")

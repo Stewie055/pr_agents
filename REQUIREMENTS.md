@@ -58,6 +58,7 @@
 - Product maturity plans under `plans/`.
 - CI quality gate covering backend lint/tests and frontend typecheck/tests/build.
 - Diagnostic plugin registry with `equipment_type` based plugin resolution.
+- Structured metric repository contract with SQLite default implementation and ClickHouse adapter target.
 
 ## Non-Goals For Current Slice
 

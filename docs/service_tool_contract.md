@@ -14,6 +14,7 @@ Service 层不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返�
 
 真实业务迁移时，应优先把 Qt 程序里的解析、清洗、建模、绘图和报告逻辑抽成 Service。图表应由 Service 使用 Matplotlib 或业务绘图库生成 PNG/SVG/PDF 等文件，再通过 Artifact 暴露给 Agent 和 WebUI；Agent 不直接绘图。
 Runtime 通过 `PluginRegistry` 按案例 `equipment_type` 选择 Service 所在插件，因此真实业务迁移应新增插件并注册，不应让 Agent 直接判断业务类型。
+解析类 Tool 会把 Service 提取出的结构化指标写入 `MetricRepository`；当前默认 SQLite 实现，生产目标是 ClickHouse adapter。
 
 ## Tool Contract
 

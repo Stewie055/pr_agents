@@ -40,6 +40,27 @@ class CSVDiagnosticService:
             data={"rows": rows[:100], "row_count": len(rows), "columns": columns},
         )
 
+    def extract_metric_points(self, *, case_id: str, dataset_id: str, path: str) -> list[dict[str, Any]]:
+        rows = self._read_rows(path)
+        points: list[dict[str, Any]] = []
+        for sample_index, row in enumerate(rows):
+            for column, raw in row.items():
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    points.append(
+                        {
+                            "case_id": case_id,
+                            "dataset_id": dataset_id,
+                            "metric_name": column,
+                            "sample_index": sample_index,
+                            "value": value,
+                        }
+                    )
+        return points
+
     def inspect_dataset(self, *, case_id: str, dataset_id: str, path: str) -> AnalysisArtifact:
         rows = self._read_rows(path)
         columns = list(rows[0].keys()) if rows else []

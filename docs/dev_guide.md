@@ -72,10 +72,11 @@ bash scripts/check.sh
 2. 提供设备类型、展示名称和业务 Service。
 3. 将插件注册到 `PluginRegistry`，Runtime 会按案例 `equipment_type` 选择插件。
 4. 在 Service 中实现解析、指标画像、诊断和报告。
-5. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
-6. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
-7. 将需要暴露给 Agent 的能力注册为 Tool。
-8. 为 Service、Tool、API 和前端展示补充测试。
+5. 解析流程应通过 `extract_metric_points` 或等价接口输出结构化指标，Tool 负责写入 `MetricRepository`。
+6. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
+7. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
+8. 将需要暴露给 Agent 的能力注册为 Tool。
+9. 为 Service、Tool、API 和前端展示补充测试。
 
 ## Change Rules
 

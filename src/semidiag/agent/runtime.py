@@ -11,6 +11,7 @@ from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
 from semidiag.agent.memory import MemoryService
 from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, StateGate
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
+from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.plugins.base import DiagnosticPlugin
@@ -56,6 +57,7 @@ class AgentRuntime:
         memory: MemoryService | None = None,
         plugin: DiagnosticPlugin | None = None,
         plugin_registry: PluginRegistry | None = None,
+        metric_repository: MetricRepository | None = None,
     ) -> None:
         self.repository = repository
         self.registry = registry or build_default_registry()
@@ -63,6 +65,7 @@ class AgentRuntime:
         self.memory = memory or MemoryService()
         self.plugin = plugin or GenericEquipmentPlugin()
         self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
+        self.metric_repository = metric_repository
         self.router = LLMRouter(self.llm)
         self.state_gate = StateGate()
 
@@ -409,6 +412,7 @@ class AgentRuntime:
             actor=state.actor,
             repository=self.repository,
             plugin=self._resolve_plugin(state.case_id),
+            metric_repository=self.metric_repository,
         )
 
     def _resolve_plugin(self, case_id: str) -> DiagnosticPlugin:
@@ -567,6 +571,7 @@ class AgentRuntime:
             actor=actor,
             repository=self.repository,
             plugin=self._resolve_plugin(case_id),
+            metric_repository=self.metric_repository,
         )
         summaries: list[str] = []
         for name in tool_names:

@@ -7,6 +7,7 @@
 - FastAPI 后端 API
 - Vue/Vite 前端诊断案例工作区
 - SQLite 元数据、会话、工具轨迹和 Artifact 存储
+- SQLite 结构化指标仓储抽象，后续可替换为 ClickHouse adapter
 - 本地设备性能文件上传
 - 可插拔诊断插件包骨架
 - 诊断插件注册表，可按案例 `equipment_type` 选择业务插件
