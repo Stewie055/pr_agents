@@ -36,6 +36,13 @@ class MemoryService:
 
     def retrieve(self, query: str) -> list[str]:
         tokens = {token.lower() for token in query.split() if len(token) > 2}
+        repository_notes = []
+        if self.repository is not None:
+            repository_notes = [
+                f"{item.title} ({item.source}): {item.content[:500]}"
+                for item in self.repository.search_knowledge(query)
+            ]
         if not tokens:
-            return []
-        return [note for note in self.longterm_notes if tokens & {token.lower() for token in note.split()}]
+            return repository_notes
+        memory_notes = [note for note in self.longterm_notes if tokens & {token.lower() for token in note.split()}]
+        return repository_notes + memory_notes

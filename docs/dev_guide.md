@@ -93,3 +93,13 @@ bash scripts/check.sh
 - `GET /api/tasks/{task_id}`
 
 后续解析、绘图、PPT 和 Workflow 批处理应逐步迁移到该接口背后的任务抽象。
+
+## Knowledge
+
+本地知识库 API：
+
+- `POST /api/knowledge`
+- `GET /api/knowledge`
+- `GET /api/knowledge?q=<keyword>`
+
+当前实现是 SQLite 关键词检索，用于打通知识问答上下文；后续向量库/RAG adapter 应保持来源摘要语义。

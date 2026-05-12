@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
+from semidiag.domain import KnowledgeRecord
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
@@ -28,6 +29,12 @@ class CreateCaseRequest(BaseModel):
 class MessageRequest(BaseModel):
     content: str
     dataset_id: str | None = None
+
+
+class CreateKnowledgeRequest(BaseModel):
+    title: str
+    content: str
+    source: str = "local"
 
 
 class AppState:
@@ -157,6 +164,17 @@ def create_app(state: AppState | None = None) -> FastAPI:
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
         return task
+
+    @app.post("/api/knowledge")
+    def create_knowledge(request: CreateKnowledgeRequest, current=Depends(get_state)):
+        return current.repository.add_knowledge(
+            KnowledgeRecord(title=request.title, content=request.content, source=request.source)
+        )
+
+    @app.get("/api/knowledge")
+    def list_knowledge(q: str | None = None, current=Depends(get_state)):
+        items = current.repository.search_knowledge(q) if q else current.repository.list_knowledge()
+        return {"knowledge": [item.model_dump(mode="json") for item in items]}
 
     @app.post("/api/cases")
     def create_case(request: CreateCaseRequest, current=Depends(get_state)):

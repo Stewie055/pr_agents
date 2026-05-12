@@ -61,6 +61,14 @@ class MemoryRecord(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class KnowledgeRecord(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("kn"))
+    title: str
+    content: str
+    source: str = "local"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ev"))
     case_id: str

@@ -705,13 +705,14 @@ class AgentRuntime:
 
     def _build_non_tool_messages(self, *, case_id: str, user_content: str, decision: RouteDecision) -> list[dict[str, Any]]:
         route_context = self._build_route_context(case_id=case_id)
+        knowledge = self.memory.retrieve(user_content) if decision.intent == "knowledge_qa" else []
         system_prompt = (
             "你是半导体工业设备性能诊断平台的辅助诊断 Agent。"
             "根据路由结果回复用户。可以使用 Markdown 和 emoji。"
             "不要默认展示内部 case id、dataset id、artifact id。"
             "不要要求用户手动提供 dataset id；如果需要数据，只提示用户上传数据文件。"
             "如果 response_style=brief，回复应简短。"
-            "资料问答可以基于通用工程知识回答，但要说明当前尚未接入专用知识库。"
+            "资料问答优先基于 Knowledge context；如果没有命中，再说明当前专用知识库没有相关资料。"
         )
         return [
             {"role": "system", "content": system_prompt},
@@ -720,7 +721,8 @@ class AgentRuntime:
                 "content": (
                     f"用户输入: {user_content}\n"
                     f"Route decision JSON: {decision.model_dump(mode='json')}\n"
-                    f"Case state: {route_context}"
+                    f"Case state: {route_context}\n"
+                    f"Knowledge context: {knowledge}"
                 ),
             },
         ]
@@ -888,7 +890,7 @@ class AgentRuntime:
                 return "你好。当前数据已就绪，可以直接告诉我你想分析的问题。"
             return "你好。请先上传设备性能 CSV，上传后我可以开始分析。"
         if decision.intent == "knowledge_qa":
-            return "我可以回答设备性能诊断相关资料问题；当前专用知识库还未接入，回答会基于通用工程知识。"
+            return "我可以回答设备性能诊断相关资料问题；如果本地知识库有命中，我会优先引用本地资料。"
         if decision.intent == "workflow_request":
             return "Workflow 能力还在规划中。当前可以先完成单次数据分析和诊断。"
         return "我需要更多信息才能继续。你可以上传数据文件，或描述想分析的问题。"

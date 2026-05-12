@@ -135,9 +135,9 @@ LLM 公共 contract、prompt XML+JSON parser 和审计脱敏已拆到独立模�
 
 - 短期记忆：诊断案例消息历史。
 - 中期记忆：SQLite 持久化摘要，Runtime 构建 LLM 上下文时按案例读取。
-- 长期记忆：关键词检索桩。
+- 长期记忆：SQLite 本地知识记录和关键词检索，knowledge_qa 路径会把命中摘要放入 LLM 上下文。
 
-长期目标是将中长期记忆持久化，并接入可替换 RAG 存储。
+长期目标是将知识检索替换为可配置向量库/RAG 存储，并保留来源引用。
 
 ## Human In The Loop
 

@@ -15,6 +15,7 @@ from semidiag.domain import (
     DatasetRecord,
     DiagnosticCase,
     Evidence,
+    KnowledgeRecord,
     LLMAuditEvent,
     MemoryRecord,
     ToolCallTrace,
@@ -130,6 +131,26 @@ class SQLiteRepository:
             (item for item in self._list("memory", MemoryRecord) if item.case_id == case_id and item.scope == scope),
             None,
         )
+
+    def add_knowledge(self, knowledge: KnowledgeRecord) -> KnowledgeRecord:
+        self._put("knowledge", knowledge)
+        return knowledge
+
+    def list_knowledge(self) -> list[KnowledgeRecord]:
+        return self._list("knowledge", KnowledgeRecord)
+
+    def search_knowledge(self, query: str, *, limit: int = 5) -> list[KnowledgeRecord]:
+        tokens = {token.lower() for token in query.split() if len(token) > 1}
+        if not tokens:
+            return []
+        matches: list[KnowledgeRecord] = []
+        for item in self.list_knowledge():
+            haystack = f"{item.title}\n{item.content}\n{item.source}".lower()
+            if any(token in haystack for token in tokens):
+                matches.append(item)
+            if len(matches) >= limit:
+                break
+        return matches
 
     def add_artifact(self, artifact: AnalysisArtifact) -> AnalysisArtifact:
         self._put("artifact", artifact)

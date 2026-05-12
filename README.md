@@ -15,6 +15,7 @@
 - Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要
+- 本地知识库记录和关键词检索 API，供资料问答路径使用
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
 - ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复
 - SSE Agent 事件流，实时展示路由、工具调用、产物生成和回复增量

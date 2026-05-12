@@ -104,6 +104,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 ## Context Policy
 
 发送给 LLM 的上下文只包含案例摘要、数据集元数据、Artifact 摘要、Evidence 摘要、最近消息和中期记忆。
+资料问答路径还会附加本地知识库检索命中的摘要和来源。
 
 不会发送原始 CSV 行级数据或完整设备文件内容。
 
