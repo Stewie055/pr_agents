@@ -36,6 +36,8 @@ Vue/Vite WebUI
 - DiagnosisConclusion 辅助结论。
 - 报告草稿和发布审计。
 
+中期记忆以 `MemoryRecord` 持久化到 SQLite，当前用于保存案例级摘要；长期记忆和 RAG 后续通过独立知识库接口扩展。
+
 ## Extension Model
 
 设备类型通过诊断插件包扩展。插件包应提供：

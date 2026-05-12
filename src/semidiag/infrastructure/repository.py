@@ -16,6 +16,7 @@ from semidiag.domain import (
     DiagnosticCase,
     Evidence,
     LLMAuditEvent,
+    MemoryRecord,
     ToolCallTrace,
 )
 
@@ -117,6 +118,19 @@ class SQLiteRepository:
     def list_case_messages(self, case_id: str) -> list[AgentMessage]:
         return [item for item in self._list("message", AgentMessage) if item.case_id == case_id]
 
+    def upsert_memory(self, memory: MemoryRecord) -> MemoryRecord:
+        existing = self.get_case_memory(memory.case_id, memory.scope)
+        if existing is not None:
+            memory.id = existing.id
+        self._put("memory", memory)
+        return memory
+
+    def get_case_memory(self, case_id: str, scope: str) -> MemoryRecord | None:
+        return next(
+            (item for item in self._list("memory", MemoryRecord) if item.case_id == case_id and item.scope == scope),
+            None,
+        )
+
     def add_artifact(self, artifact: AnalysisArtifact) -> AnalysisArtifact:
         self._put("artifact", artifact)
         return artifact
@@ -170,6 +184,7 @@ class SQLiteRepository:
             "case": case,
             "datasets": self.list_case_datasets(case_id),
             "messages": self.list_case_messages(case_id),
+            "memory": [item for item in self._list("memory", MemoryRecord) if item.case_id == case_id],
             "artifacts": self.list_case_artifacts(case_id),
             "evidence": self.list_case_evidence(case_id),
             "tool_traces": self.list_case_tool_traces(case_id),

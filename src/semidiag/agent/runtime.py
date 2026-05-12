@@ -62,7 +62,7 @@ class AgentRuntime:
         self.repository = repository
         self.registry = registry or build_default_registry()
         self.llm = llm or StubLLMProvider()
-        self.memory = memory or MemoryService()
+        self.memory = memory or MemoryService(repository)
         self.plugin = plugin or GenericEquipmentPlugin()
         self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
         self.metric_repository = metric_repository
@@ -658,7 +658,7 @@ class AgentRuntime:
                 }
                 for item in evidence[-10:]
             ],
-            "midterm_memory": self.memory.midterm_summaries.get(case_id),
+            "midterm_memory": self.memory.get_midterm(case_id),
         }
         system_prompt = (
             "你是半导体工业设备性能诊断平台的辅助诊断 Agent。"

@@ -53,6 +53,14 @@ class AgentMessage(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class MemoryRecord(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("mem"))
+    case_id: str
+    scope: Literal["midterm", "longterm"]
+    content: str
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ev"))
     case_id: str

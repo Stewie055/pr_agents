@@ -10,6 +10,7 @@ from semidiag.domain.models import (
     DiagnosticCase,
     Evidence,
     LLMAuditEvent,
+    MemoryRecord,
     ToolCallTrace,
 )
 
@@ -22,6 +23,7 @@ __all__ = [
     "DiagnosticCase",
     "DiagnosisConclusion",
     "Evidence",
-    "ToolCallTrace",
     "LLMAuditEvent",
+    "MemoryRecord",
+    "ToolCallTrace",
 ]
