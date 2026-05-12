@@ -48,3 +48,4 @@ Vue/Vite WebUI
 - 知识库索引配置。
 
 当前实现提供 `GenericEquipmentPlugin` 作为打桩示例。
+运行时通过 `PluginRegistry` 按案例 `equipment_type` 选择插件；真实业务包接入时应注册自己的插件，而不是改 Agent 或 Tool 核心逻辑。

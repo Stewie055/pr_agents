@@ -2,5 +2,6 @@
 
 from semidiag.plugins.base import DiagnosticPlugin
 from semidiag.plugins.generic_equipment import GenericEquipmentPlugin
+from semidiag.plugins.registry import PluginRegistry
 
-__all__ = ["DiagnosticPlugin", "GenericEquipmentPlugin"]
+__all__ = ["DiagnosticPlugin", "GenericEquipmentPlugin", "PluginRegistry"]

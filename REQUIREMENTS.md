@@ -57,6 +57,7 @@
 - Backend and frontend tests.
 - Product maturity plans under `plans/`.
 - CI quality gate covering backend lint/tests and frontend typecheck/tests/build.
+- Diagnostic plugin registry with `equipment_type` based plugin resolution.
 
 ## Non-Goals For Current Slice
 

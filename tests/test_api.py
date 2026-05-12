@@ -116,6 +116,22 @@ def test_api_lists_tool_contracts(tmp_path):
     assert {"parse_dataset", "profile_dataset", "diagnose_performance", "generate_report"} <= names
 
 
+def test_api_lists_diagnostic_plugins(tmp_path):
+    state = AppState(tmp_path)
+    app = create_app(state)
+    client = TestClient(app)
+
+    response = client.get("/api/plugins")
+
+    assert response.status_code == 200
+    assert response.json()["plugins"] == [
+        {
+            "equipment_type": "generic_semiconductor_tool",
+            "display_name": "Generic semiconductor equipment",
+        }
+    ]
+
+
 def test_api_generates_downloadable_ppt_report(tmp_path):
     state = AppState(tmp_path)
     state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)

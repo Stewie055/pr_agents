@@ -9,6 +9,7 @@
 - SQLite 元数据、会话、工具轨迹和 Artifact 存储
 - 本地设备性能文件上传
 - 可插拔诊断插件包骨架
+- 诊断插件注册表，可按案例 `equipment_type` 选择业务插件
 - Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传

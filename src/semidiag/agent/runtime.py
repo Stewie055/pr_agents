@@ -12,7 +12,7 @@ from semidiag.agent.memory import MemoryService
 from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, StateGate
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import GenericEquipmentPlugin
+from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.plugins.base import DiagnosticPlugin
 from semidiag.tools import ToolContext, ToolRegistry, build_default_registry
 
@@ -55,12 +55,14 @@ class AgentRuntime:
         llm: LLMProvider | None = None,
         memory: MemoryService | None = None,
         plugin: DiagnosticPlugin | None = None,
+        plugin_registry: PluginRegistry | None = None,
     ) -> None:
         self.repository = repository
         self.registry = registry or build_default_registry()
         self.llm = llm or StubLLMProvider()
         self.memory = memory or MemoryService()
         self.plugin = plugin or GenericEquipmentPlugin()
+        self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
         self.router = LLMRouter(self.llm)
         self.state_gate = StateGate()
 
@@ -406,8 +408,14 @@ class AgentRuntime:
             case_id=state.case_id,
             actor=state.actor,
             repository=self.repository,
-            plugin=self.plugin,
+            plugin=self._resolve_plugin(state.case_id),
         )
+
+    def _resolve_plugin(self, case_id: str) -> DiagnosticPlugin:
+        case = self.repository.get_case(case_id)
+        if case is None:
+            raise KeyError(case_id)
+        return self.plugin_registry.require(case.equipment_type)
 
     def _record_route_decision(self, state: AgentState) -> None:
         self._record_agent_step(
@@ -558,7 +566,7 @@ class AgentRuntime:
             case_id=case_id,
             actor=actor,
             repository=self.repository,
-            plugin=self.plugin,
+            plugin=self._resolve_plugin(case_id),
         )
         summaries: list[str] = []
         for name in tool_names:

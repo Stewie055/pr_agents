@@ -14,7 +14,7 @@ from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import GenericEquipmentPlugin
+from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.tools import build_default_registry
 
 
@@ -36,11 +36,12 @@ class AppState:
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
         self.plugin = GenericEquipmentPlugin(generated_root=self.generated_root)
+        self.plugin_registry = PluginRegistry([self.plugin])
         self.agent = AgentRuntime(
             self.repository,
             registry=build_default_registry(),
             llm=llm_provider,
-            plugin=self.plugin,
+            plugin_registry=self.plugin_registry,
         )
 
 
@@ -131,6 +132,15 @@ def create_app(state: AppState | None = None) -> FastAPI:
     @app.get("/api/tools")
     def list_tools(current=Depends(get_state)):
         return {"tools": [tool.model_dump() for tool in current.agent.registry.list_tools()]}
+
+    @app.get("/api/plugins")
+    def list_plugins(current=Depends(get_state)):
+        return {
+            "plugins": [
+                {"equipment_type": plugin.equipment_type, "display_name": plugin.display_name}
+                for plugin in current.plugin_registry.list_plugins()
+            ]
+        }
 
     @app.post("/api/cases")
     def create_case(request: CreateCaseRequest, current=Depends(get_state)):
