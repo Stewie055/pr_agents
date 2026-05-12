@@ -10,13 +10,13 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-`ppt-template-sdk` 通过私有 Git SSH 依赖安装，环境需要能访问：
+`ppt_template_sdk` 已作为单文件 vendored 到仓库：
 
 ```text
-git@github.com:Stewie055/ppt-template.git
+src/semidiag/vendor/ppt_template_sdk.py
 ```
 
-如果部署环境暂时无法访问该仓库，PPT 生成代码会降级到 `python-pptx`，但正式业务模板接入应安装该 SDK。
+部署环境不需要访问私有 Git 仓库。该 SDK 依赖 `python-pptx`，如需升级 SDK，应从上游单文件版本替换该文件并跑完整测试。
 
 运行：
 

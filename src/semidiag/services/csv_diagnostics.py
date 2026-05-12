@@ -16,15 +16,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 
 from semidiag.domain import AnalysisArtifact, DiagnosisConclusion, Evidence
-
-try:
-    from ppt_template_sdk import ImageContent, PptTemplateEngine, RendererRegistry, RenderContext, TextContent
-except ImportError:  # pragma: no cover - exercised only when private SDK is unavailable.
-    ImageContent = None
-    PptTemplateEngine = None
-    RendererRegistry = None
-    RenderContext = None
-    TextContent = None
+from semidiag.vendor.ppt_template_sdk import ImageContent, PptTemplateEngine, RendererRegistry, RenderContext, TextContent
 
 
 class CSVDiagnosticService:
@@ -379,58 +371,54 @@ class CSVDiagnosticService:
         evidence: list[Evidence],
         chart_artifacts: list[AnalysisArtifact],
     ) -> str:
-        if PptTemplateEngine and RendererRegistry and RenderContext and TextContent:
-            template_path = output_path.with_name("diagnostic_report_template.pptx")
-            self._create_default_template(template_path, include_chart=bool(chart_artifacts))
-            registry = RendererRegistry()
+        template_path = output_path.with_name("diagnostic_report_template.pptx")
+        self._create_default_template(template_path, include_chart=bool(chart_artifacts))
+        registry = RendererRegistry()
 
-            @registry.renderer("title")
-            def render_title(placeholder, context):
-                return TextContent(text=context.get_value("title", "Diagnostic Report"))
+        @registry.renderer("title")
+        def render_title(placeholder, context):
+            return TextContent(text=context.get_value("title", "Diagnostic Report"))
 
-            @registry.renderer("subtitle")
-            def render_subtitle(placeholder, context):
-                return TextContent(text=context.get_value("subtitle", "Semiconductor equipment performance diagnosis"))
+        @registry.renderer("subtitle")
+        def render_subtitle(placeholder, context):
+            return TextContent(text=context.get_value("subtitle", "Semiconductor equipment performance diagnosis"))
 
-            @registry.renderer("summary")
-            def render_summary(placeholder, context):
-                return TextContent(text=context.get_value("summary", ""))
+        @registry.renderer("summary")
+        def render_summary(placeholder, context):
+            return TextContent(text=context.get_value("summary", ""))
 
-            @registry.renderer("evidence")
-            def render_evidence(placeholder, context):
-                return TextContent(text=context.get_value("evidence_text", "No evidence generated."))
+        @registry.renderer("evidence")
+        def render_evidence(placeholder, context):
+            return TextContent(text=context.get_value("evidence_text", "No evidence generated."))
 
-            @registry.renderer("artifacts")
-            def render_artifacts(placeholder, context):
-                return TextContent(text=context.get_value("artifact_text", "No artifacts generated."))
+        @registry.renderer("artifacts")
+        def render_artifacts(placeholder, context):
+            return TextContent(text=context.get_value("artifact_text", "No artifacts generated."))
 
-            if chart_artifacts and ImageContent:
+        if chart_artifacts:
 
-                @registry.renderer("primary_chart")
-                def render_primary_chart(placeholder, context):
-                    return ImageContent(image_path=context.get_value("primary_chart_path"))
+            @registry.renderer("primary_chart")
+            def render_primary_chart(placeholder, context):
+                return ImageContent(image_path=context.get_value("primary_chart_path"))
 
-            context = RenderContext(
-                data={
-                    "title": "Diagnostic Report",
-                    "subtitle": "Engineer review draft",
-                    "summary": sections[0]["body"],
-                    "evidence_text": "\n".join(f"- {item.title}: {item.summary}" for item in evidence)
-                    or "No evidence generated.",
-                    "artifact_text": "\n".join(f"- {item.title}: {item.summary}" for item in artifacts)
-                    or "No artifacts generated.",
-                    "primary_chart_path": str(chart_artifacts[0].data["file_path"]) if chart_artifacts else "",
-                }
-            )
-            PptTemplateEngine(registry=registry).render(
-                template_path=str(template_path),
-                output_path=str(output_path),
-                context=context,
-            )
-            return "ppt_template_sdk"
-
-        self._render_fallback_ppt(output_path=output_path, sections=sections, artifacts=artifacts, evidence=evidence, chart_artifacts=chart_artifacts)
-        return "python-pptx"
+        context = RenderContext(
+            data={
+                "title": "Diagnostic Report",
+                "subtitle": "Engineer review draft",
+                "summary": sections[0]["body"],
+                "evidence_text": "\n".join(f"- {item.title}: {item.summary}" for item in evidence)
+                or "No evidence generated.",
+                "artifact_text": "\n".join(f"- {item.title}: {item.summary}" for item in artifacts)
+                or "No artifacts generated.",
+                "primary_chart_path": str(chart_artifacts[0].data["file_path"]) if chart_artifacts else "",
+            }
+        )
+        PptTemplateEngine(registry=registry).render(
+            template_path=str(template_path),
+            output_path=str(output_path),
+            context=context,
+        )
+        return "ppt_template_sdk"
 
     def _create_default_template(self, path: Path, *, include_chart: bool) -> None:
         presentation = Presentation()
@@ -472,39 +460,6 @@ class CSVDiagnosticService:
             chart_box.text_frame.text = "Chart"
 
         presentation.save(path)
-
-    def _render_fallback_ppt(
-        self,
-        *,
-        output_path: Path,
-        sections: list[dict[str, str]],
-        artifacts: list[AnalysisArtifact],
-        evidence: list[Evidence],
-        chart_artifacts: list[AnalysisArtifact],
-    ) -> None:
-        presentation = Presentation()
-        slide = presentation.slides.add_slide(presentation.slide_layouts[0])
-        slide.shapes.title.text = "Diagnostic Report"
-        slide.placeholders[1].text = "Semiconductor equipment performance diagnosis"
-
-        slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-        slide.shapes.title.text = "Executive Summary"
-        slide.placeholders[1].text = sections[0]["body"]
-
-        slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-        slide.shapes.title.text = "Evidence"
-        slide.placeholders[1].text = "\n".join(f"- {item.title}: {item.summary}" for item in evidence) or "No evidence generated."
-
-        slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-        slide.shapes.title.text = "Artifacts"
-        slide.placeholders[1].text = "\n".join(f"- {item.title}: {item.summary}" for item in artifacts) or "No artifacts generated."
-
-        if chart_artifacts:
-            slide = presentation.slides.add_slide(presentation.slide_layouts[5])
-            slide.shapes.title.text = chart_artifacts[0].title
-            slide.shapes.add_picture(str(chart_artifacts[0].data["file_path"]), Inches(0.8), Inches(1.2), width=Inches(11.6))
-
-        presentation.save(output_path)
 
     def _read_rows(self, path: str) -> list[dict[str, str]]:
         with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:

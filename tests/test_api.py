@@ -139,7 +139,7 @@ def test_api_generates_downloadable_ppt_report(tmp_path):
     assert reports
     report = reports[-1]
     assert report["data"]["format"] == "pptx"
-    assert report["data"]["template_engine"] in {"ppt_template_sdk", "python-pptx"}
+    assert report["data"]["template_engine"] == "ppt_template_sdk"
     ppt = client.get(f"/api/artifacts/{report['id']}/file")
     assert ppt.status_code == 200
     assert ppt.headers["content-type"].startswith(

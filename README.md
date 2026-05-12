@@ -47,13 +47,13 @@ cd frontend
 npm install
 ```
 
-PPT 报告依赖私有模板 SDK，Python 依赖中已按提交 `5b60dd2e04179489d505c19618b0c7429555d807` 锁定：
+PPT 报告使用仓库内 vendored 单文件 `ppt_template_sdk`：
 
 ```text
-ppt-template-sdk @ git+ssh://git@github.com/Stewie055/ppt-template.git@5b60dd2e04179489d505c19618b0c7429555d807
+src/semidiag/vendor/ppt_template_sdk.py
 ```
 
-安装环境需要能通过 SSH 访问该仓库。运行时如果 SDK 不可用，Service 会降级为 `python-pptx` 直接生成 PPTX；正式业务模板应走 `ppt-template-sdk`。
+运行环境不需要访问私有 Git 仓库。该单文件 SDK 依赖 `python-pptx`，正式业务模板仍按 `ph:<type>:<key>` 占位符协议渲染。
 
 ## Run
 
