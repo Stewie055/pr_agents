@@ -26,7 +26,7 @@
 - 系统必须提供独立 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出；主诊断界面默认只展示用户可见信息。
 - 主诊断界面必须固定视口工作区，聊天区和右侧工作台独立滚动，避免长回复撑高整个页面。
 - 业务图表由 Service 层使用 Matplotlib 或业务绘图库生成图片文件，Artifact 必须提供可下载/可预览的文件 URL；前端必须支持多图切换展示。
-- 报告输出以 PPTX 为主，优先使用 `ppt-template-sdk` 模板渲染；报告 Artifact 必须包含格式、MIME、文件 URL 和结构化章节摘要。
+- 报告输出以 PPTX 为主，使用仓库内 vendored `ppt_template_sdk` 单文件模板渲染，不依赖私有 Git 仓库；报告 Artifact 必须包含格式、MIME、文件 URL 和结构化章节摘要。
 - 原始文件保留版本，结构化性能指标长期进入 ClickHouse。
 - 元数据先用 SQLite 起步，并保持 PostgreSQL 迁移兼容。
 - RAG 通过抽象接口接入，长期支持可替换向量库。
@@ -51,7 +51,7 @@
 - Trace debug API and WebUI debug console。
 - Stream-first WebUI with independent chat scrolling and right-side diagnostic workspace。
 - Matplotlib PNG chart artifacts and chart gallery。
-- PPTX report artifacts with `ppt-template-sdk` integration and file download API。
+- PPTX report artifacts with vendored `ppt_template_sdk` integration and file download API。
 - Agent runtime and Tool Registry。
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.
