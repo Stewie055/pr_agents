@@ -39,6 +39,11 @@ Tool 执行必须：
 
 Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Evidence` 或诊断 payload。
 
+业务 Tool 可以来自两类来源：
+
+- Common Tool：平台级通用能力，启动时进入 common registry。
+- Plugin Tool：测校项插件提供的工具，只有插件被选中后才进入本轮 active registry。
+
 ## Tool Observation
 
 每个 ToolResult 必须提供给 Agent loop 使用的结构化 Observation：

@@ -75,6 +75,36 @@ def test_api_case_upload_and_agent_message(tmp_path):
     assert chart_file.content.startswith(b"\x89PNG")
 
 
+def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=state.tool_registry,
+        llm=StubLLMProvider(),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
+        metric_repository=state.metric_repository,
+    )
+    app = create_app(state)
+    client = TestClient(app)
+    case = client.post("/api/cases", json={"title": "LT offline", "equipment_type": "LT"}).json()
+
+    upload = client.post(
+        f"/api/cases/{case['id']}/files",
+        files={"file": ("demo_LT-C.log", "example", "text/plain")},
+    )
+    snapshot = client.get(f"/api/cases/{case['id']}")
+    tools = client.get(f"/api/tools?case_id={case['id']}&content=offline%20check")
+
+    assert upload.status_code == 200
+    assert upload.json()["log_kind"] == "LT-C"
+    assert upload.json()["scenario"] == "offline_setup"
+    assert snapshot.json()["datasets"][0]["matched_rule"] == "filename:LT-C"
+    tool_names = {item["name"] for item in tools.json()["tools"]}
+    assert "lt_list_log_pool" in tool_names
+    assert "lt_example_offline_analyze" in tool_names
+
+
 def test_api_streams_agent_events(tmp_path):
     state = AppState(tmp_path)
     state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
@@ -131,12 +161,8 @@ def test_api_lists_diagnostic_plugins(tmp_path):
     response = client.get("/api/plugins")
 
     assert response.status_code == 200
-    assert response.json()["plugins"] == [
-        {
-            "equipment_type": "generic_semiconductor_tool",
-            "display_name": "Generic semiconductor equipment",
-        }
-    ]
+    plugin_types = {plugin["equipment_type"] for plugin in response.json()["plugins"]}
+    assert {"generic_semiconductor_tool", "LT"} <= plugin_types
 
 
 def test_api_generates_downloadable_ppt_report(tmp_path):

@@ -63,6 +63,9 @@
 - Midterm memory persisted in SQLite and loaded into LLM case context.
 - Local knowledge records with keyword retrieval for knowledge_qa context, keeping vector RAG replaceable later.
 - Workflow template foundation with case trace capture and manual replay API.
+- Business extension loader for `business/tools/*.py` and `business/plugins/*.py` using `register(registry)`.
+- LT calibration plugin manifests and plugin-scoped tool exposure to avoid tool explosion.
+- LT log pool metadata detected from filename rules for LT-D, LT-C, and LT-R.
 
 ## Non-Goals For Current Slice
 

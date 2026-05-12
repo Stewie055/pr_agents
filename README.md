@@ -13,6 +13,8 @@
 - 诊断插件注册表，可按案例 `equipment_type` 选择业务插件
 - 进程内任务队列基础和任务状态查询 API
 - Workflow 模板基础，可从案例工具轨迹沉淀并手动重放
+- 仓库内 `business/` 扩展加载，支持业务 Tool 和 LT 测校项 Plugin 单文件注册
+- Plugin-scoped tools：Agent 每轮只看到公共工具和被选中测校项插件提供的工具
 - Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要
@@ -142,6 +144,8 @@ Agent 会自动使用当前案例最新上传的数据集。界面和回复默�
 - [Architecture](docs/architecture.md)
 - [Agent Design](docs/agent_design.md)
 - [Service and Tool Contract](docs/service_tool_contract.md)
+- [Extension Development](docs/extension_development.md)
+- [LT Business Design](docs/lt_business_design.md)
 - [Development Guide](docs/dev_guide.md)
 - [LLM Provider](docs/llm_provider.md)
 - [ReAct Agent Loop](docs/react_agent_loop.md)

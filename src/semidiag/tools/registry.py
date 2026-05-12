@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from semidiag.domain import AnalysisArtifact, AuditEvent, Evidence, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricPoint, MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import DiagnosticPlugin
+from semidiag.plugins.base import DiagnosticPlugin
 
 
 class ToolDefinition(BaseModel):
@@ -77,6 +77,24 @@ class ToolRegistry:
 
     def get_tool(self, name: str) -> ToolDefinition | None:
         return self._definitions.get(name)
+
+    def get_handler(self, name: str) -> ToolHandler | None:
+        return self._handlers.get(name)
+
+    def extend(self, other: ToolRegistry) -> None:
+        for definition in other.list_tools():
+            handler = other.get_handler(definition.name)
+            if handler is not None:
+                self.register(definition, handler)
+
+    def scoped(self, names: set[str]) -> ToolRegistry:
+        registry = ToolRegistry()
+        for name in names:
+            definition = self.get_tool(name)
+            handler = self.get_handler(name)
+            if definition is not None and handler is not None:
+                registry.register(definition, handler)
+        return registry
 
     def openai_tools(self) -> list[dict[str, Any]]:
         return [definition.as_openai_tool() for definition in self.list_tools()]

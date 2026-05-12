@@ -15,3 +15,8 @@ class GenericEquipmentPlugin(DiagnosticPlugin):
 
     def diagnostic_service(self) -> CSVDiagnosticService:
         return self._service
+
+
+class LTEquipmentPlugin(GenericEquipmentPlugin):
+    equipment_type = "LT"
+    display_name = "LT equipment"

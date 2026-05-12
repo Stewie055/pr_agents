@@ -13,11 +13,13 @@ from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
 from semidiag.domain import KnowledgeRecord, WorkflowTemplate
+from semidiag.extensions import ExtensionLoader
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.infrastructure.tasks import InProcessTaskQueue
-from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
+from semidiag.lt import detect_lt_log_metadata
+from semidiag.plugins import CalibrationPluginRegistry, GenericEquipmentPlugin, LTEquipmentPlugin, PluginRegistry
 from semidiag.tools import ToolContext, build_default_registry
 
 
@@ -52,12 +54,19 @@ class AppState:
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
         self.plugin = GenericEquipmentPlugin(generated_root=self.generated_root)
-        self.plugin_registry = PluginRegistry([self.plugin])
+        self.lt_plugin = LTEquipmentPlugin(generated_root=self.generated_root)
+        self.plugin_registry = PluginRegistry([self.plugin, self.lt_plugin])
+        self.calibration_registry = CalibrationPluginRegistry()
+        self.extension_loader = ExtensionLoader(os.getenv("SEMIDIAG_EXTENSION_DIR", "business"))
+        self.tool_registry = build_default_registry()
+        self.extension_loader.load_tools(self.tool_registry)
+        self.extension_loader.load_plugins(self.calibration_registry)
         self.agent = AgentRuntime(
             self.repository,
-            registry=build_default_registry(),
+            registry=self.tool_registry,
             llm=llm_provider,
             plugin_registry=self.plugin_registry,
+            calibration_registry=self.calibration_registry,
             metric_repository=self.metric_repository,
         )
 
@@ -147,8 +156,12 @@ def create_app(state: AppState | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/api/tools")
-    def list_tools(current=Depends(get_state)):
-        return {"tools": [tool.model_dump() for tool in current.agent.registry.list_tools()]}
+    def list_tools(case_id: str | None = None, content: str | None = None, current=Depends(get_state)):
+        registry = current.agent.registry
+        if case_id and content:
+            selection = current.agent._select_calibration_plugins(case_id=case_id, content=content)
+            registry = current.agent._build_active_tool_registry(case_id=case_id, actor="engineer", selection=selection)
+        return {"tools": [tool.model_dump() for tool in registry.list_tools()]}
 
     @app.get("/api/plugins")
     def list_plugins(current=Depends(get_state)):
@@ -158,6 +171,14 @@ def create_app(state: AppState | None = None) -> FastAPI:
                 for plugin in current.plugin_registry.list_plugins()
             ]
         }
+
+    @app.get("/api/calibrations")
+    def list_calibrations(current=Depends(get_state)):
+        return {"calibrations": [manifest.model_dump(mode="json") for manifest in current.calibration_registry.list_manifests()]}
+
+    @app.get("/api/extensions")
+    def list_extensions(current=Depends(get_state)):
+        return current.extension_loader.report.model_dump()
 
     @app.get("/api/tasks")
     def list_tasks(current=Depends(get_state)):
@@ -304,6 +325,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
             content=content,
             content_type=file.content_type,
         )
+        metadata = detect_lt_log_metadata(dataset.filename)
+        dataset.log_kind = metadata.log_kind  # type: ignore[assignment]
+        dataset.scenario = metadata.scenario  # type: ignore[assignment]
+        dataset.matched_rule = metadata.matched_rule
         current.repository.add_dataset(dataset)
         return dataset
 

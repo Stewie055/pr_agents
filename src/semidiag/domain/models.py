@@ -32,6 +32,10 @@ class DatasetRecord(BaseModel):
     filename: str
     path: str
     content_type: str | None = None
+    log_kind: Literal["LT-D", "LT-C", "LT-R"] | None = None
+    scenario: Literal["offline_setup", "online_production"] | None = None
+    model_variant: str | None = None
+    matched_rule: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

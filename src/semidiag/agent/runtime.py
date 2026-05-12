@@ -13,7 +13,15 @@ from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, St
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
+from semidiag.plugins import (
+    CalibrationPluginRegistry,
+    CalibrationSelection,
+    GenericEquipmentPlugin,
+    PluginRegistry,
+    PluginSelectionContext,
+    PluginSelectorAgent,
+    ToolScopeBuilder,
+)
 from semidiag.plugins.base import DiagnosticPlugin
 from semidiag.tools import ToolContext, ToolRegistry, build_default_registry
 
@@ -41,6 +49,8 @@ class AgentState:
     actor: str
     messages: list[dict[str, Any]]
     observations: list[dict[str, Any]]
+    tool_registry: ToolRegistry | None = None
+    selected_plugins: CalibrationSelection | None = None
     step_count: int = 0
     stop_reason: str | None = None
 
@@ -57,6 +67,7 @@ class AgentRuntime:
         memory: MemoryService | None = None,
         plugin: DiagnosticPlugin | None = None,
         plugin_registry: PluginRegistry | None = None,
+        calibration_registry: CalibrationPluginRegistry | None = None,
         metric_repository: MetricRepository | None = None,
     ) -> None:
         self.repository = repository
@@ -65,6 +76,8 @@ class AgentRuntime:
         self.memory = memory or MemoryService(repository)
         self.plugin = plugin or GenericEquipmentPlugin()
         self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
+        self.calibration_registry = calibration_registry or CalibrationPluginRegistry()
+        self.plugin_selector = PluginSelectorAgent(self.llm, self.calibration_registry)
         self.metric_repository = metric_repository
         self.router = LLMRouter(self.llm)
         self.state_gate = StateGate()
@@ -114,6 +127,7 @@ class AgentRuntime:
             active_dataset_id=active_dataset_id,
             decision=decision,
         )
+        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         return self._run_react_loop(
             AgentState(
                 case_id=case_id,
@@ -123,6 +137,8 @@ class AgentRuntime:
                 actor=actor,
                 messages=messages,
                 observations=[],
+                tool_registry=self._build_active_tool_registry(case_id=case_id, actor=actor, selection=selection),
+                selected_plugins=selection,
             )
         )
 
@@ -185,6 +201,7 @@ class AgentRuntime:
             active_dataset_id=active_dataset_id,
             decision=decision,
         )
+        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         yield from self._run_react_loop_stream(
             AgentState(
                 case_id=case_id,
@@ -194,12 +211,15 @@ class AgentRuntime:
                 actor=actor,
                 messages=messages,
                 observations=[],
+                tool_registry=self._build_active_tool_registry(case_id=case_id, actor=actor, selection=selection),
+                selected_plugins=selection,
             )
         )
 
     def _run_react_loop(self, state: AgentState) -> AgentTurnResult:
         context = self._tool_context(state)
-        tools = self.llm.tool_specs(self.registry)
+        tool_registry = state.tool_registry or self.registry
+        tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
 
@@ -230,7 +250,7 @@ class AgentRuntime:
             observation_messages: list[dict[str, Any]] = []
 
             for call in result.tool_calls:
-                if self.registry.get_tool(call.name) is None:
+                if tool_registry.get_tool(call.name) is None:
                     raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
                 signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
                 call_counts[signature] = call_counts.get(signature, 0) + 1
@@ -241,7 +261,7 @@ class AgentRuntime:
 
                 arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
                 try:
-                    tool_result = self.registry.run(call.name, context, arguments)
+                    tool_result = tool_registry.run(call.name, context, arguments)
                     observation = self._tool_result_observation(call.name, tool_result)
                 except Exception as exc:
                     observation = {
@@ -286,7 +306,8 @@ class AgentRuntime:
 
     def _run_react_loop_stream(self, state: AgentState) -> Iterator[AgentStreamEvent]:
         context = self._tool_context(state)
-        tools = self.llm.tool_specs(self.registry)
+        tool_registry = state.tool_registry or self.registry
+        tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
         streamed_final_content = ""
@@ -321,7 +342,7 @@ class AgentRuntime:
             observation_messages: list[dict[str, Any]] = []
 
             for call in result.tool_calls:
-                if self.registry.get_tool(call.name) is None:
+                if tool_registry.get_tool(call.name) is None:
                     raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
                 signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
                 call_counts[signature] = call_counts.get(signature, 0) + 1
@@ -333,7 +354,7 @@ class AgentRuntime:
                 arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
                 yield AgentStreamEvent(event="tool_start", data={"tool_name": call.name})
                 try:
-                    tool_result = self.registry.run(call.name, context, arguments)
+                    tool_result = tool_registry.run(call.name, context, arguments)
                     observation = self._tool_result_observation(call.name, tool_result)
                     yield AgentStreamEvent(
                         event="tool_result",
@@ -421,12 +442,44 @@ class AgentRuntime:
             raise KeyError(case_id)
         return self.plugin_registry.require(case.equipment_type)
 
+    def _select_calibration_plugins(self, *, case_id: str, content: str) -> CalibrationSelection:
+        datasets = self.repository.list_case_datasets(case_id)
+        context = PluginSelectionContext(
+            user_content=content,
+            log_kinds=sorted({dataset.log_kind for dataset in datasets if dataset.log_kind}),
+            scenario=next((dataset.scenario for dataset in reversed(datasets) if dataset.scenario), None),
+            model_variant=next((dataset.model_variant for dataset in reversed(datasets) if dataset.model_variant), None),
+        )
+        return self.plugin_selector.select(context)
+
+    def _build_active_tool_registry(self, *, case_id: str, actor: str, selection: CalibrationSelection) -> ToolRegistry:
+        state = AgentState(
+            case_id=case_id,
+            user_content="",
+            active_dataset_id=None,
+            decision=RouteDecision(intent="data_analysis"),
+            actor=actor,
+            messages=[],
+            observations=[],
+        )
+        return ToolScopeBuilder(common_registry=self.registry, calibration_registry=self.calibration_registry).build(
+            selected_plugin_ids=selection.plugin_ids,
+            context=self._tool_context(state),
+        )
+
     def _record_route_decision(self, state: AgentState) -> None:
         self._record_agent_step(
             case_id=state.case_id,
             step_index=0,
             phase="route",
-            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
+            observations=[
+                {"route_decision": state.decision.model_dump(mode="json")},
+                {
+                    "calibration_selection": state.selected_plugins.__dict__
+                    if state.selected_plugins is not None
+                    else None
+                },
+            ],
         )
 
     def _repeated_tool_call_message(self) -> str:
@@ -634,10 +687,15 @@ class AgentRuntime:
                     "id": item.id,
                     "filename": item.filename,
                     "content_type": item.content_type,
+                    "log_kind": item.log_kind,
+                    "scenario": item.scenario,
+                    "model_variant": item.model_variant,
+                    "matched_rule": item.matched_rule,
                     "created_at": item.created_at.isoformat(),
                 }
                 for item in datasets
             ],
+            "calibration_plugins": [manifest.model_dump(mode="json") for manifest in self.calibration_registry.list_manifests()],
             "artifacts": [
                 {
                     "id": item.id,

@@ -21,6 +21,7 @@ Vue/Vite WebUI
 - Infrastructure 提供 SQLite、原始文件存储、生成文件存储、未来 ClickHouse、RAG 和任务队列适配。
 - 结构化指标通过 `MetricRepository` 写入，当前默认 SQLite 实现用于本地开发和测试，后续 ClickHouse adapter 应实现同一接口。
 - 长任务通过 `InProcessTaskQueue` 起步，当前提供任务状态 API；后续解析、绘图、PPT 和 Workflow 批处理逐步迁移到任务队列。
+- 业务扩展通过 `business/tools` 和 `business/plugins` 单文件注册。公共工具启动时进入 common registry；测校插件启动时只进入 manifest catalog，被选中后才构建 plugin tools。
 
 ## Diagnostic Case
 

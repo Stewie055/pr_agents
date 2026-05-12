@@ -78,6 +78,17 @@ bash scripts/check.sh
 8. 将需要暴露给 Agent 的能力注册为 Tool。
 9. 为 Service、Tool、API 和前端展示补充测试。
 
+## Business Extensions
+
+业务扩展文件放在仓库内 `business/`：
+
+- `business/tools/*.py`: 公共业务工具，文件必须提供 `register(registry)`。
+- `business/plugins/*.py`: LT 测校项插件，文件必须提供 `register(registry)`。
+
+服务启动时加载扩展。加载状态可通过 `GET /api/extensions` 查看，测校插件 manifest 可通过 `GET /api/calibrations` 查看。
+
+详细规范见 `docs/extension_development.md` 和 `docs/lt_business_design.md`。
+
 ## Change Rules
 
 - 每次新增功能必须补充自动化测试。

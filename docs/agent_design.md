@@ -32,9 +32,11 @@ Stub 模式根据消息内容选择工具序列：
 
 1. LLM Router/Triage 先输出结构化 `RouteDecision`。
 2. State Gate 检查当前状态是否满足该路径，例如分析/诊断/报告是否已有数据集。
-3. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或 XML+JSON 文本协议返回 tool calls。
-4. 执行白名单工具，将结构化 Observation 回填给模型。
-5. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
+3. PluginSelectorAgent 基于用户请求、案例日志池和测校插件 manifest 选择 0-3 个 LT 测校插件。
+4. ToolScopeBuilder 构造 common tools + selected plugin tools。
+5. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或 XML+JSON 文本协议返回 tool calls。
+6. 执行白名单工具，将结构化 Observation 回填给模型。
+7. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
 
 主界面通过 SSE 消费同一条 Runtime 链路，实时展示路由、工具执行、Artifact 生成和最终回复增量；同步接口仍复用同一套 ReAct 逻辑。
 同步和流式接口的最终消息落库、Artifact/ToolTrace 汇总和停止原因元数据使用共享 Runtime helper，避免用户界面与 API 回归测试看到不同结果。
@@ -82,6 +84,8 @@ Router 由 LLM 完成，不使用规则分类器代替语义判断。`RouteDecis
 - `build_trend_chart`: 使用 Matplotlib 生成趋势图 PNG 文件 Artifact。
 - `diagnose_performance`: 基于 evidence 生成辅助诊断。
 - `generate_report`: 使用 `ppt-template-sdk` 生成可下载的 PPTX 报告 Artifact。
+
+业务扩展工具不全局暴露给 Agent。测校插件被选中后，Runtime 才把该插件 `build_tools()` 返回的工具加入本轮 active registry。
 
 ## User Visible Artifacts
 
