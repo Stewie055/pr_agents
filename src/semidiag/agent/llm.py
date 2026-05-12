@@ -5,65 +5,28 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Literal, Protocol
+from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
 
+from semidiag.agent.llm_audit import redact_llm_request
+from semidiag.agent.llm_contracts import LLMError, LLMProvider, LLMResult, LLMStreamChunk, LLMToolCall
+from semidiag.agent.llm_prompt_xml import PromptXmlJsonParser
 from semidiag.config import LLMConfig
 
-
-class LLMError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int = 502) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class LLMToolCall(BaseModel):
-    id: str
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-class LLMResult(BaseModel):
-    content: str = ""
-    tool_calls: list[LLMToolCall] = Field(default_factory=list)
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-@dataclass
-class LLMStreamChunk:
-    event: Literal["delta", "result"]
-    delta: str = ""
-    result: LLMResult | None = None
-
-
-class LLMProvider(Protocol):
-    provider_name: str
-    model: str
-    tool_mode: str
-
-    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
-        raise NotImplementedError
-
-    def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
-        raise NotImplementedError
-
-    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
-        raise NotImplementedError
-
-    def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
-        raise NotImplementedError
-
-    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
-        raise NotImplementedError
-
-    def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def tool_observation_messages(self, observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        raise NotImplementedError
+__all__ = [
+    "LLMError",
+    "LLMProvider",
+    "LLMResult",
+    "LLMStreamChunk",
+    "LLMToolCall",
+    "OpenAINativeToolProvider",
+    "OpenAIPromptXmlJsonProvider",
+    "PromptXmlJsonParser",
+    "StubLLMProvider",
+    "build_llm_provider",
+    "redact_llm_request",
+]
 
 
 class StubLLMProvider:
@@ -607,52 +570,9 @@ class OpenAIPromptXmlJsonProvider:
         return normalized
 
 
-class PromptXmlJsonParser:
-    @staticmethod
-    def parse(content: str) -> dict[str, Any]:
-        tool_blocks = re.findall(r"<tool_calls>\s*(.*?)\s*</tool_calls>", content, flags=re.DOTALL | re.IGNORECASE)
-        final_blocks = re.findall(r"<final_answer>\s*(.*?)\s*</final_answer>", content, flags=re.DOTALL | re.IGNORECASE)
-        if tool_blocks and final_blocks:
-            raise LLMError("Prompt XML+JSON output must not contain both tool_calls and final_answer", status_code=502)
-        if not tool_blocks and not final_blocks:
-            raise LLMError("Prompt XML+JSON output must contain tool_calls or final_answer", status_code=502)
-        if final_blocks:
-            return {"action": "final_answer", "content": final_blocks[-1].strip()}
-        if len(tool_blocks) > 1:
-            raise LLMError("Prompt XML+JSON output must contain only one tool_calls block", status_code=502)
-        try:
-            payload = json.loads(tool_blocks[0])
-        except json.JSONDecodeError as exc:
-            raise LLMError("Prompt XML+JSON tool_calls block must contain valid JSON", status_code=502) from exc
-        if not isinstance(payload, list) or not payload:
-            raise LLMError("Prompt XML+JSON tool_calls must be a non-empty JSON array", status_code=502)
-        calls: list[LLMToolCall] = []
-        for index, item in enumerate(payload, start=1):
-            if not isinstance(item, dict):
-                raise LLMError("Prompt XML+JSON tool call must be an object", status_code=502)
-            name = item.get("name")
-            arguments = item.get("arguments", {})
-            if not isinstance(name, str) or not name:
-                raise LLMError("Prompt XML+JSON tool call name must be a string", status_code=502)
-            if not isinstance(arguments, dict):
-                raise LLMError(f"Prompt XML+JSON arguments must be an object for {name}", status_code=502)
-            calls.append(LLMToolCall(id=str(item.get("id") or f"call_{index}"), name=name, arguments=arguments))
-        return {"action": "tool_calls", "tool_calls": calls}
-
-
 def build_llm_provider(config: LLMConfig) -> LLMProvider:
     if config.provider == "openai_compatible":
         if config.tool_mode == "prompt_xml_json":
             return OpenAIPromptXmlJsonProvider(config)
         return OpenAINativeToolProvider(config)
     return StubLLMProvider()
-
-
-def redact_llm_request(request: dict[str, Any]) -> dict[str, Any]:
-    redacted = json.loads(json.dumps(request, ensure_ascii=False))
-    headers = redacted.get("headers")
-    if isinstance(headers, dict) and "Authorization" in headers:
-        headers["Authorization"] = "Bearer ***"
-    if "api_key" in redacted:
-        redacted["api_key"] = "***"
-    return redacted

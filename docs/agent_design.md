@@ -124,6 +124,7 @@ LLM 调用会记录：
 API key 和 Authorization header 不能进入审计记录。
 
 Provider 负责各自的工具规格、消息编码、Observation 回填和模型输出解析；Runtime 只消费统一的 `LLMToolCall` 和最终回复，不判断具体工具协议。
+LLM 公共 contract、prompt XML+JSON parser 和审计脱敏已拆到独立模块，`semidiag.agent.llm` 保持兼容导出入口。
 
 独立 Trace 调试台按案例聚合 AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，支持查看 timeline、展开脱敏 request/response，并导出脱敏 JSON。主诊断界面默认不请求 trace API。
 

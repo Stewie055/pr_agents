@@ -7,6 +7,13 @@
 - `stub`: 默认离线模式，不调用真实模型。
 - `openai_compatible`: 调用 OpenAI-compatible `/v1/chat/completions`。
 
+实现分层：
+
+- `llm_contracts`: LLM 错误、工具调用、结果、流式 chunk 和 Provider 协议。
+- `llm_prompt_xml`: prompt XML+JSON 工具协议解析器。
+- `llm_audit`: LLM 请求脱敏工具。
+- `llm`: provider 兼容导出入口和 OpenAI-compatible 实现。
+
 ## Configuration
 
 复制 `.env.example`：
