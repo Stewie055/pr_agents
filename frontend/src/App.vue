@@ -1,313 +1,65 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import {
-  createCase,
-  exportCaseTrace,
-  getCase,
-  getCaseTrace,
-  sendMessage,
-  uploadDataset,
-  type Artifact,
-  type CaseSnapshot,
-  type CaseTrace
-} from "./api";
+import { computed } from "vue";
+import CaseSidebar from "./components/CaseSidebar.vue";
+import ChatPanel from "./components/ChatPanel.vue";
+import TraceDebugView from "./components/TraceDebugView.vue";
+import WorkspacePanel from "./components/WorkspacePanel.vue";
+import { useCaseSession } from "./composables/useCaseSession";
 
-const caseTitle = ref("设备性能异常诊断案例");
-const message = ref("请分析这份设备性能数据，给出诊断、证据和建议。");
-const loading = ref(false);
-const traceLoading = ref(false);
-const error = ref("");
-const snapshot = ref<CaseSnapshot | null>(null);
-const trace = ref<CaseTrace | null>(null);
-const debugMode = ref(new URLSearchParams(window.location.search).get("debug") === "trace");
+const session = useCaseSession();
 
-const activeDatasetId = computed(() => snapshot.value?.datasets.at(-1)?.id);
-const latestDatasetName = computed(() => snapshot.value?.datasets.at(-1)?.filename);
-const hasDataset = computed(() => Boolean(activeDatasetId.value));
-const artifacts = computed<Artifact[]>(() => snapshot.value?.artifacts ?? []);
-const report = computed(() => artifacts.value.find((item) => item.kind === "report"));
-const traceSteps = computed(() => trace.value?.agent_steps ?? snapshot.value?.agent_steps ?? []);
-const llmEvents = computed(() => trace.value?.llm_audit_events ?? []);
-const sendButtonText = computed(() => (loading.value ? (hasDataset.value ? "正在分析..." : "正在回复...") : hasDataset.value ? "发送并分析" : "发送"));
-const caseStateText = computed(() => {
-  if (!snapshot.value) {
-    return "尚未创建案例";
-  }
-  if (hasDataset.value) {
-    return `数据已就绪：${latestDatasetName.value}`;
-  }
-  return "等待上传设备性能 CSV";
-});
+const traceSteps = computed(() => session.trace.value?.agent_steps ?? session.snapshot.value?.agent_steps ?? []);
+const llmEvents = computed(() => session.trace.value?.llm_audit_events ?? []);
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function renderMarkdown(value: string) {
-  let html = escapeHtml(value);
-  html = html.replace(/^### (.*)$/gm, "<h4>$1</h4>");
-  html = html.replace(/^## (.*)$/gm, "<h3>$1</h3>");
-  html = html.replace(/^# (.*)$/gm, "<h2>$1</h2>");
-  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/^- (.*)$/gm, "<li>$1</li>");
-  html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
-  return html.replace(/\n/g, "<br />");
-}
-
-function formatJson(value: unknown) {
-  return JSON.stringify(value ?? {}, null, 2);
-}
-
-async function ensureCase() {
-  if (snapshot.value) {
-    return snapshot.value.case.id;
-  }
-  const diagnosticCase = await createCase(caseTitle.value);
-  snapshot.value = await getCase(diagnosticCase.id);
-  return diagnosticCase.id;
-}
-
-async function handleCreateCase() {
-  loading.value = true;
-  error.value = "";
-  try {
-    const diagnosticCase = await createCase(caseTitle.value);
-    snapshot.value = await getCase(diagnosticCase.id);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "创建案例失败";
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function handleUpload(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) {
-    return;
-  }
-  loading.value = true;
-  error.value = "";
-  try {
-    const caseId = await ensureCase();
-    await uploadDataset(caseId, file);
-    snapshot.value = await getCase(caseId);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "上传失败";
-  } finally {
-    loading.value = false;
-    input.value = "";
-  }
-}
-
-async function handleSend() {
-  if (!message.value.trim()) {
-    return;
-  }
-  loading.value = true;
-  error.value = "";
-  try {
-    const caseId = await ensureCase();
-    await sendMessage(caseId, message.value, activeDatasetId.value);
-    snapshot.value = await getCase(caseId);
-    trace.value = null;
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "Agent 调用失败";
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function loadTrace() {
-  if (!snapshot.value) {
-    return;
-  }
-  traceLoading.value = true;
-  error.value = "";
-  try {
-    trace.value = await getCaseTrace(snapshot.value.case.id);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "加载 Trace 失败";
-  } finally {
-    traceLoading.value = false;
-  }
-}
-
-async function openTraceDebug() {
-  if (!snapshot.value) {
-    return;
-  }
-  debugMode.value = true;
-  window.history.replaceState(null, "", "?debug=trace");
-  await loadTrace();
-}
-
-function closeTraceDebug() {
-  debugMode.value = false;
-  window.history.replaceState(null, "", window.location.pathname);
-}
-
-async function downloadTrace() {
-  if (!snapshot.value) {
-    return;
-  }
-  traceLoading.value = true;
-  error.value = "";
-  try {
-    const blob = await exportCaseTrace(snapshot.value.case.id);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "agent-trace.json";
-    link.click();
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "导出 Trace 失败";
-  } finally {
-    traceLoading.value = false;
-  }
+async function upload(file: File) {
+  await session.uploadFile(file);
 }
 </script>
 
 <template>
-  <main v-if="debugMode" class="debug-workspace">
-    <header class="debug-topbar">
-      <div>
-        <p class="eyebrow">Trace Debug</p>
-        <h1>Agent 调试台</h1>
-      </div>
-      <div class="debug-actions">
-        <button @click="closeTraceDebug">返回主界面</button>
-        <button :disabled="!snapshot || traceLoading" @click="loadTrace">{{ traceLoading ? "加载中..." : "刷新 Trace" }}</button>
-        <button :disabled="!snapshot || traceLoading" @click="downloadTrace">导出 JSON</button>
-      </div>
-    </header>
-
-    <section v-if="!snapshot" class="debug-empty">
-      <p>请先在主界面创建案例，然后从案例入口打开调试台。</p>
-    </section>
-
-    <section v-else class="debug-grid">
-      <section class="debug-panel">
-        <h2>Agent Steps</h2>
-        <ol v-if="traceSteps.length" class="trace-timeline">
-          <li v-for="step in traceSteps" :key="step.id">
-            <strong>{{ step.step_index }} · {{ step.phase }}</strong>
-            <span>{{ step.duration_ms ?? 0 }} ms</span>
-            <p v-if="step.stop_reason">stop: {{ step.stop_reason }}</p>
-            <details v-if="step.tool_calls?.length || step.observations?.length || step.llm_metadata">
-              <summary>查看 step JSON</summary>
-              <pre>{{ formatJson(step) }}</pre>
-            </details>
-          </li>
-        </ol>
-        <p v-else class="empty-trace">暂无 Agent step trace。</p>
-      </section>
-
-      <section class="debug-panel">
-        <h2>LLM Audit</h2>
-        <article v-for="event in llmEvents" :key="event.id" class="llm-event">
-          <strong>{{ event.provider }} / {{ event.model }}</strong>
-          <span>{{ event.duration_ms }} ms</span>
-          <p v-if="event.error">{{ event.error }}</p>
-          <details>
-            <summary>request / response</summary>
-            <pre>{{ formatJson({ request: event.request, response: event.response }) }}</pre>
-          </details>
-        </article>
-        <p v-if="!llmEvents.length" class="empty-trace">暂无 LLM 调用记录。</p>
-      </section>
-    </section>
-  </main>
+  <TraceDebugView
+    v-if="session.debugMode.value"
+    :snapshot-exists="Boolean(session.snapshot.value)"
+    :trace="session.trace.value"
+    :fallback-steps="traceSteps"
+    :llm-events="llmEvents"
+    :loading="session.traceLoading.value"
+    @close="session.closeTraceDebug"
+    @refresh="session.loadTrace"
+    @download="session.downloadTrace"
+  />
 
   <main v-else class="workspace">
-    <aside class="sidebar">
-      <div>
-        <p class="eyebrow">Diagnostic Case</p>
-        <h1>半导体设备性能诊断</h1>
-      </div>
+    <CaseSidebar
+      v-model:case-title="session.caseTitle.value"
+      :loading="session.loading.value"
+      :upload-loading="session.uploadLoading.value"
+      :case-title-text="session.snapshot.value?.case.title"
+      :equipment-type="session.snapshot.value?.case.equipment_type"
+      :case-state-text="session.caseStateText.value"
+      :has-case="Boolean(session.snapshot.value)"
+      @create="session.createNewCase"
+      @upload="upload"
+      @debug="session.openTraceDebug"
+    />
 
-      <label class="field">
-        <span>案例名称</span>
-        <input v-model="caseTitle" />
-      </label>
+    <ChatPanel
+      v-model:draft-message="session.draftMessage.value"
+      :messages="session.displayMessages.value"
+      :loading="session.loading.value"
+      :has-dataset="session.hasDataset.value"
+      :case-state-text="session.caseStateText.value"
+      :progress-items="session.progressItems.value"
+      :error="session.error.value"
+      @send="session.sendCurrentMessage()"
+    />
 
-      <button :disabled="loading" @click="handleCreateCase">新建案例</button>
-
-      <label class="upload">
-        <span>上传性能 CSV</span>
-        <input type="file" accept=".csv,text/csv" @change="handleUpload" />
-      </label>
-
-      <section v-if="snapshot" class="case-meta">
-        <strong>{{ snapshot.case.title }}</strong>
-        <span>{{ snapshot.case.equipment_type }}</span>
-        <span>{{ caseStateText }}</span>
-        <button class="debug-link" :disabled="!snapshot" @click="openTraceDebug">调试 Trace</button>
-      </section>
-    </aside>
-
-    <section class="chat">
-      <header>
-        <p class="eyebrow">Agent</p>
-        <h2>辅助诊断对话</h2>
-        <p class="state-line">{{ caseStateText }}</p>
-      </header>
-
-      <div class="messages">
-        <article v-for="item in snapshot?.messages ?? []" :key="item.id" :class="['message', item.role]">
-          <strong>{{ item.role }}</strong>
-          <div class="message-content" v-html="renderMarkdown(item.content)" />
-        </article>
-      </div>
-
-      <div class="composer">
-        <textarea v-model="message" rows="4" />
-        <button :disabled="loading" @click="handleSend">{{ sendButtonText }}</button>
-      </div>
-
-      <p v-if="error" class="error">{{ error }}</p>
-    </section>
-
-    <aside class="artifacts">
-      <header>
-        <p class="eyebrow">Evidence</p>
-        <h2>证据与报告</h2>
-      </header>
-
-      <section class="tool-trace">
-        <h3>工具轨迹</h3>
-        <ol>
-          <li v-for="trace in snapshot?.tool_traces ?? []" :key="trace.id">
-            <strong>{{ trace.tool_name }}</strong>
-            <span>{{ trace.status }}</span>
-            <p>{{ trace.result_summary }}</p>
-          </li>
-        </ol>
-      </section>
-
-      <section>
-        <h3>Artifacts</h3>
-        <article v-for="artifact in artifacts" :key="artifact.id" class="artifact">
-          <span>{{ artifact.kind }}</span>
-          <strong>{{ artifact.title }}</strong>
-          <p>{{ artifact.summary }}</p>
-        </article>
-      </section>
-
-      <section v-if="report" class="report">
-        <h3>报告草稿</h3>
-        <article v-for="section in (report.data.sections as Array<{ heading: string; body: string }> || [])" :key="section.heading">
-          <strong>{{ section.heading }}</strong>
-          <p>{{ section.body }}</p>
-        </article>
-      </section>
-    </aside>
+    <WorkspacePanel
+      :artifacts="session.snapshot.value?.artifacts ?? []"
+      :evidence="session.snapshot.value?.evidence ?? []"
+      :report-loading="session.reportLoading.value"
+      :has-dataset="session.hasDataset.value"
+      @generate-report="session.generateReport"
+    />
   </main>
 </template>

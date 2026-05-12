@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from semidiag.agent import AgentRuntime
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.plugins import GenericEquipmentPlugin
 from semidiag.tools import build_default_registry
 
 
@@ -27,7 +30,11 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
     )
     repository.add_dataset(dataset)
 
-    runtime = AgentRuntime(repository, registry=build_default_registry())
+    runtime = AgentRuntime(
+        repository,
+        registry=build_default_registry(),
+        plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"),
+    )
     result = runtime.handle_user_message(
         case_id=case.id,
         content="请诊断这份设备性能数据并给出建议",
@@ -42,6 +49,9 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
         "diagnose_performance",
     }
     assert {artifact.kind for artifact in result.artifacts} >= {"dataset", "table", "chart", "diagnosis"}
+    charts = [artifact for artifact in result.artifacts if artifact.kind == "chart" and artifact.data.get("render_type") == "image"]
+    assert charts
+    assert all((tmp_path / "generated") in Path(chart.data["file_path"]).parents for chart in charts)
     assert repository.list_case_evidence(case.id)
 
 
@@ -57,9 +67,12 @@ def test_agent_generates_report_when_requested(tmp_path):
     )
     repository.add_dataset(dataset)
 
-    runtime = AgentRuntime(repository)
+    runtime = AgentRuntime(repository, plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"))
     runtime.handle_user_message(case_id=case.id, content="生成诊断报告", dataset_id=dataset.id)
 
     reports = [artifact for artifact in repository.list_case_artifacts(case.id) if artifact.kind == "report"]
     assert reports
+    assert reports[0].data["format"] == "pptx"
+    assert reports[0].data["mime_type"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    assert Path(reports[0].data["file_path"]).exists()
     assert reports[0].data["sections"][0]["heading"] == "Executive Summary"

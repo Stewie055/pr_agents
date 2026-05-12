@@ -76,11 +76,23 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 - State Gate 通过后，分析/诊断/报告路径才进入 tool calling。
 - 系统只暴露 `ToolRegistry` 中注册的白名单工具。
 - `ToolDefinition.input_schema` 会转换为 OpenAI function parameters 或 prompt XML 中的 tool schema。
+- 图表和 PPT 报告以 Artifact 文件摘要方式反馈给 LLM，不把图片二进制或完整 PPT 内容放入上下文。
 - LLM 返回未知工具、非法参数、非法 JSON 或非法 XML 时，请求失败并写入审计。
 - DeepSeek V4 thinking mode 的 tool-call 轮次会返回 `reasoning_content`；系统会在回传 tool result 给模型时保留该字段，避免 DeepSeek 返回 400。
 - ReAct loop 的每一轮 tool-call 都会保留并回传 DeepSeek `reasoning_content`。
 - `prompt_xml_json` 模式会把历史工具计划和 observation 转成普通 XML 文本消息，兼容未开启 auto-tool-choice 的部署。
 - Runtime 不直接判断 `tool_mode`，只消费 provider 返回的统一 `LLMToolCall` 和最终回复。
+
+## Streaming
+
+`LLMProvider` 同时提供同步和流式接口：
+
+- `plan_tool_calls_stream`: 使用 `stream=true` 获取模型输出，native 模式会累积 tool-call delta 后返回完整 `LLMToolCall`。
+- `summarize_turn_stream`: 将文本 delta 作为 `message_delta` 上游事件实时输出。
+- `prompt_xml_json` 模式会先累积 XML 文本，完整解析 `<tool_calls>` 或 `<final_answer>` 后再执行工具，避免未校验协议片段进入工具链。
+- `stub` 模式提供伪流式输出，保证离线测试和前端体验一致。
+
+工具规划阶段不会把未校验的内部 XML/JSON 协议文本展示给用户；最终回复阶段才流式展示用户可见文本。
 
 ## Context Policy
 

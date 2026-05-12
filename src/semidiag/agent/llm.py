@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Iterator, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, Field
@@ -31,6 +31,13 @@ class LLMResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+@dataclass
+class LLMStreamChunk:
+    event: Literal["delta", "result"]
+    delta: str = ""
+    result: LLMResult | None = None
+
+
 class LLMProvider(Protocol):
     provider_name: str
     model: str
@@ -42,7 +49,13 @@ class LLMProvider(Protocol):
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         raise NotImplementedError
 
+    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        raise NotImplementedError
+
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
+        raise NotImplementedError
+
+    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
         raise NotImplementedError
 
     def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
@@ -71,12 +84,16 @@ class StubLLMProvider:
 
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         user_message = next((item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), "")
-        has_dataset = "active dataset id:" in user_message.lower()
+        normalized = user_message.lower()
+        has_dataset = "active dataset id:" in normalized or "active dataset available: true" in normalized
         calls = [
             LLMToolCall(id=f"stub_{index}", name=name, arguments={})
             for index, name in enumerate(self.plan_tools(user_message, has_dataset), start=1)
         ]
         return LLMResult(content="", tool_calls=calls, metadata={"provider": self.provider_name, "model": self.model})
+
+    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        yield LLMStreamChunk(event="result", result=self.plan_tool_calls(messages=messages, tools=tools))
 
     def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
         return registry.openai_tools()
@@ -88,6 +105,25 @@ class StubLLMProvider:
             + "\n".join(f"- {summary}" for summary in tool_messages)
         )
         return LLMResult(content=content, metadata={"provider": self.provider_name, "model": self.model})
+
+    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        result = self.summarize_turn(messages=messages)
+        for part in self._split_stream_text(result.content):
+            yield LLMStreamChunk(event="delta", delta=part)
+        yield LLMStreamChunk(event="result", result=result)
+
+    def _split_stream_text(self, content: str) -> list[str]:
+        parts = re.split(r"(\n|。|；|！|？)", content)
+        chunks: list[str] = []
+        current = ""
+        for part in parts:
+            current += part
+            if part in {"\n", "。", "；", "！", "？"} and current:
+                chunks.append(current)
+                current = ""
+        if current:
+            chunks.append(current)
+        return chunks or [content]
 
     def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
         return {"role": "assistant", "content": result.content or ""}
@@ -197,6 +233,116 @@ class OpenAIChatClient:
             metadata=metadata,
         )
 
+    def _chat_stream(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+    ) -> Iterator[LLMStreamChunk]:
+        url = self.config.base_url.rstrip("/") + "/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": self.config.temperature,
+            "stream": True,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+
+        started = perf_counter()
+        content_parts: list[str] = []
+        tool_parts: dict[int, dict[str, Any]] = {}
+        raw_chunks: list[dict[str, Any]] = []
+        finish_reason: str | None = None
+        reasoning_parts: list[str] = []
+
+        try:
+            with self.client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        line = line.removeprefix("data:").strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise LLMError("LLM stream returned invalid JSON chunk", status_code=502) from exc
+                    raw_chunks.append(chunk)
+                    choice = (chunk.get("choices") or [{}])[0]
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                    delta = choice.get("delta") or {}
+                    if delta.get("reasoning_content"):
+                        reasoning_parts.append(str(delta.get("reasoning_content")))
+                    text_delta = delta.get("content")
+                    if text_delta:
+                        text = str(text_delta)
+                        content_parts.append(text)
+                        yield LLMStreamChunk(event="delta", delta=text)
+                    for item in delta.get("tool_calls") or []:
+                        index = int(item.get("index", len(tool_parts)))
+                        existing = tool_parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                        if item.get("id"):
+                            existing["id"] += str(item["id"])
+                        function = item.get("function") or {}
+                        if function.get("name"):
+                            existing["name"] += str(function["name"])
+                        if function.get("arguments"):
+                            existing["arguments"] += str(function["arguments"])
+        except httpx.TimeoutException as exc:
+            raise LLMError(f"LLM stream timed out after {self.config.timeout}s", status_code=504) from exc
+        except httpx.HTTPStatusError as exc:
+            raise LLMError(f"LLM HTTP error {exc.response.status_code}: {exc.response.text}", status_code=502) from exc
+        except httpx.HTTPError as exc:
+            raise LLMError(f"LLM stream failed: {exc}", status_code=502) from exc
+
+        tool_calls: list[LLMToolCall] = []
+        for index in sorted(tool_parts):
+            item = tool_parts[index]
+            raw_arguments = item.get("arguments") or "{}"
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError as exc:
+                raise LLMError(f"LLM returned invalid streaming tool arguments for {item.get('name')}", status_code=502) from exc
+            if not isinstance(arguments, dict):
+                raise LLMError(f"LLM streaming tool arguments must be an object for {item.get('name')}", status_code=502)
+            tool_calls.append(
+                LLMToolCall(
+                    id=item.get("id") or f"call_{index + 1}",
+                    name=item.get("name") or "",
+                    arguments=arguments,
+                )
+            )
+
+        duration_ms = int((perf_counter() - started) * 1000)
+        metadata: dict[str, Any] = {
+            "provider": self.provider_name,
+            "model": self.model,
+            "tool_mode": self.tool_mode,
+            "duration_ms": duration_ms,
+            "finish_reason": finish_reason,
+            "request_payload": payload,
+        }
+        if reasoning_parts:
+            metadata["reasoning_content"] = "".join(reasoning_parts)
+        yield LLMStreamChunk(
+            event="result",
+            result=LLMResult(
+                content="".join(content_parts),
+                tool_calls=tool_calls,
+                raw_response={"stream": True, "chunks": raw_chunks},
+                metadata=metadata,
+            ),
+        )
+
 
 @dataclass
 class OpenAINativeToolProvider:
@@ -229,11 +375,17 @@ class OpenAINativeToolProvider:
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=messages, tools=tools, tool_choice="auto")
 
+    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        yield from self.chat._chat_stream(messages=messages, tools=tools, tool_choice="auto")
+
     def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
         return registry.openai_tools()
 
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=messages, tools=None, tool_choice=None)
+
+    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        yield from self.chat._chat_stream(messages=messages, tools=None, tool_choice=None)
 
     def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
         message = {
@@ -322,11 +474,49 @@ class OpenAIPromptXmlJsonProvider:
         result.tool_calls = parsed["tool_calls"]
         return result
 
+    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        prompt_messages = self._build_prompt_messages(messages=messages, tools=tools)
+        stream_result: LLMResult | None = None
+        for chunk in self.chat._chat_stream(messages=prompt_messages, tools=None, tool_choice=None):
+            if chunk.event == "result":
+                stream_result = chunk.result
+        if stream_result is None:
+            raise LLMError("LLM stream ended without a result", status_code=502)
+        try:
+            parsed = PromptXmlJsonParser.parse(stream_result.content)
+        except LLMError as first_error:
+            repair_messages = prompt_messages + [
+                {"role": "assistant", "content": stream_result.content or ""},
+                {
+                    "role": "user",
+                    "content": (
+                        "上一条回复不符合 XML+JSON 工具协议。请重新输出，且只输出一个 XML 块："
+                        "<tool_calls>JSON数组</tool_calls> 或 <final_answer>最终回复</final_answer>。"
+                        "不要输出任何解释、Markdown 代码块或前置文本。"
+                    ),
+                },
+            ]
+            stream_result = self.chat._chat(messages=repair_messages, tools=None, tool_choice=None)
+            stream_result.metadata["repair_reason"] = str(first_error)
+            parsed = PromptXmlJsonParser.parse(stream_result.content)
+        stream_result.metadata["tool_mode"] = self.tool_mode
+        stream_result.metadata["raw_model_content"] = stream_result.content
+        if parsed["action"] == "final_answer":
+            stream_result.content = parsed["content"]
+            stream_result.tool_calls = []
+        else:
+            stream_result.content = ""
+            stream_result.tool_calls = parsed["tool_calls"]
+        yield LLMStreamChunk(event="result", result=stream_result)
+
     def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
         return registry.prompt_tools()
 
     def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
         return self.chat._chat(messages=self._normalize_messages(messages), tools=None, tool_choice=None)
+
+    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
+        yield from self.chat._chat_stream(messages=self._normalize_messages(messages), tools=None, tool_choice=None)
 
     def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
         return {

@@ -13,9 +13,13 @@
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
 - ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复
+- SSE Agent 事件流，实时展示路由、工具调用、产物生成和回复增量
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
+- OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积
 - 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、LLM 审计并导出脱敏 JSON
 - 通用 CSV 性能数据示例诊断
+- Matplotlib PNG 图表 Artifact，多图图库、下载和全屏预览
+- PPTX 诊断报告 Artifact，优先使用 `ppt-template-sdk` 模板渲染并支持下载
 - 结构化 Artifact、Evidence、DiagnosisConclusion 和报告草稿
 - 后端 pytest 与前端 Vitest 自动化测试
 
@@ -42,6 +46,14 @@ pip install -e .[dev]
 cd frontend
 npm install
 ```
+
+PPT 报告依赖私有模板 SDK，Python 依赖中已按提交 `5b60dd2e04179489d505c19618b0c7429555d807` 锁定：
+
+```text
+ppt-template-sdk @ git+ssh://git@github.com/Stewie055/ppt-template.git@5b60dd2e04179489d505c19618b0c7429555d807
+```
+
+安装环境需要能通过 SSH 访问该仓库。运行时如果 SDK 不可用，Service 会降级为 `python-pptx` 直接生成 PPTX；正式业务模板应走 `ppt-template-sdk`。
 
 ## Run
 
@@ -106,8 +118,8 @@ npm run build
 1. 在 WebUI 创建诊断案例。
 2. 上传包含数值指标的设备性能 CSV。
 3. 发送“请分析这份设备性能数据，给出诊断、证据和建议”。
-4. Agent 通过 ReAct loop 调用字段检查、画像、趋势图、诊断等工具。
-5. WebUI 展示工具轨迹、Artifact、证据和报告草稿。
+4. Agent 通过 SSE 实时展示路由、工具调用、图表/报告产物生成和回复增量。
+5. WebUI 中间聊天区独立滚动，右侧诊断工作台展示概览、Matplotlib 图表和 PPT 报告入口。
 6. 需要排查 Agent 行为时，从案例侧边栏打开“调试 Trace”进入独立调试台，或导出脱敏 JSON。
 
 Agent 会自动使用当前案例最新上传的数据集。界面和回复默认不展示内部 case/dataset/artifact id，也不会要求用户手动输入 dataset id。

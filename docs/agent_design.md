@@ -36,6 +36,8 @@ Stub 模式根据消息内容选择工具序列：
 4. 执行白名单工具，将结构化 Observation 回填给模型。
 5. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
 
+主界面通过 SSE 消费同一条 Runtime 链路，实时展示路由、工具执行、Artifact 生成和最终回复增量；同步接口仍复用同一套 ReAct 逻辑。
+
 模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
 
 `SEMIDIAG_LLM_TOOL_MODE=prompt_xml_json` 用于未开启 auto-tool-choice 的部署。该模式不发送 `tools/tool_choice`，通过 `<available_tools>` 注入工具列表，通过 `<tool_calls>` / `<final_answer>` 做动作边界，但 Runtime 仍解析成统一的 `LLMToolCall` 并复用同一套工具执行链路。
@@ -76,9 +78,26 @@ Router 由 LLM 完成，不使用规则分类器代替语义判断。`RouteDecis
 - `inspect_dataset`: 查看字段、列类型、行数和样例。
 - `parse_dataset`: 解析并建立数据集 artifact。
 - `profile_dataset`: 统计画像并生成 evidence。
-- `build_trend_chart`: 生成趋势图数据。
+- `build_trend_chart`: 使用 Matplotlib 生成趋势图 PNG 文件 Artifact。
 - `diagnose_performance`: 基于 evidence 生成辅助诊断。
-- `generate_report`: 生成可编辑报告草稿。
+- `generate_report`: 使用 `ppt-template-sdk` 生成可下载的 PPTX 报告 Artifact。
+
+## User Visible Artifacts
+
+Agent 只在回复中总结图表和报告，不把内部 id 暴露给用户。WebUI 根据 Artifact 展示用户可见资产：
+
+- `chart`: 多张 Matplotlib 图表，按 `display_group`、`figure_kind` 和 `order` 排序切换。
+- `report`: PPTX 报告下载入口，同时展示结构化章节摘要。
+
+后端通过 `/api/artifacts/{artifact_id}/file` 返回生成文件。该接口当前是内网开发版本，后续接入权限后应按案例权限校验访问。
+
+## WebUI Workspace
+
+主界面分为三个独立滚动区域：
+
+- 左侧案例栏：案例名、上传数据、Trace 调试入口。
+- 中间聊天区：消息列表独立滚动，输入区固定底部，展示流式 Agent 进度。
+- 右侧诊断工作台：概览、图表、报告三类用户可见产物，不展示原始 Artifact 列表和工具轨迹。
 
 ## LLM Context
 

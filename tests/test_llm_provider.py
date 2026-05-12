@@ -486,6 +486,81 @@ def test_openai_compatible_invalid_tool_arguments_raise_error():
         provider.plan_tool_calls(messages=[{"role": "user", "content": "x"}], tools=[])
 
 
+def test_openai_compatible_streams_text_deltas():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        assert body["stream"] is True
+        content = "\n\n".join(
+            [
+                'data: {"choices":[{"delta":{"content":"诊断"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}',
+                "data: [DONE]",
+            ]
+        )
+        return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
+
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    chunks = list(provider.summarize_turn_stream(messages=[{"role": "user", "content": "x"}]))
+
+    assert [chunk.delta for chunk in chunks if chunk.event == "delta"] == ["诊断", "完成"]
+    assert chunks[-1].result
+    assert chunks[-1].result.content == "诊断完成"
+
+
+def test_openai_compatible_streams_native_tool_call_arguments():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        assert body["stream"] is True
+        assert "tools" in body
+        content = "\n\n".join(
+            [
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"inspect_dataset","arguments":"{\\"dataset_id\\":"}}]},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"placeholder\\"}"}}]},"finish_reason":"tool_calls"}]}',
+                "data: [DONE]",
+            ]
+        )
+        return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
+
+    provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    chunks = list(provider.plan_tool_calls_stream(messages=[{"role": "user", "content": "x"}], tools=[{"type": "function"}]))
+
+    result = chunks[-1].result
+    assert result
+    assert result.tool_calls[0].name == "inspect_dataset"
+    assert result.tool_calls[0].arguments == {"dataset_id": "placeholder"}
+
+
+def test_prompt_xml_json_stream_accumulates_and_parses_tool_calls():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        assert body["stream"] is True
+        assert "tools" not in body
+        content = "\n\n".join(
+            [
+                'data: {"choices":[{"delta":{"content":"<tool_calls>"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{"content":"[{\\"name\\":\\"inspect_dataset\\",\\"arguments\\":{}}]"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{"content":"</tool_calls>"},"finish_reason":"stop"}]}',
+                "data: [DONE]",
+            ]
+        )
+        return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
+
+    provider = OpenAIPromptXmlJsonProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")
+    )
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    chunks = list(provider.plan_tool_calls_stream(messages=[{"role": "user", "content": "x"}], tools=[]))
+
+    result = chunks[-1].result
+    assert result
+    assert result.tool_calls[0].name == "inspect_dataset"
+
+
 def test_openai_compatible_http_error_is_mapped():
     provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))
     provider.client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(500, text="boom")))

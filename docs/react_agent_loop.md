@@ -10,6 +10,21 @@
 Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 ```
 
+## Agent Event Stream
+
+前端主对话使用 `POST /api/cases/{case_id}/messages/stream` 接收 SSE 事件：
+
+- `started`: 请求进入 Agent runtime。
+- `route`: 返回 intent、目标和路由原因。
+- `tool_start`: 工具开始执行。
+- `tool_result`: 工具完成或失败，返回用户可见 summary。
+- `artifact_created`: 新图表、诊断或报告 Artifact 已保存。
+- `message_delta`: 最终回复文本增量。
+- `final`: 返回最终 assistant message、Artifacts 和 Tool traces。
+- `error`: LLM、工具或 runtime 错误。
+
+非流式 `/messages` 接口保留，用于同步调用和回归测试。
+
 ## Stop Conditions
 
 - LLM 返回 final answer 且没有 tool calls。
@@ -23,9 +38,9 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 
 - `inspect_dataset`: columns、column_types、numeric_columns、row_count、preview。
 - `profile_dataset`: per-column profile、evidence summary。
-- `build_trend_chart`: chart type、series names、point count。
+- `build_trend_chart`: render type、chart count、chart title、figure kind、display group、series names、point count。
 - `diagnose_performance`: possible causes、confidence、risk level、recommendations。
-- `generate_report`: section headings and format。
+- `generate_report`: section headings、format、MIME type、chart count、template engine。
 
 Observation 不应包含完整原始文件内容。
 
@@ -59,4 +74,4 @@ Trace API 默认统一脱敏密钥和认证头，并截断超长文本。导出�
 
 ## User-Facing Output
 
-最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端主界面展示最终回复、工具摘要和 Artifact；独立调试台按需展示完整 step trace。
+最终回复会过滤内部 `case_`、`ds_`、`art_` 标识，并移除 DSML/tool-call 标记。前端主界面展示流式回复、Agent 进度、诊断概览、多图图库和 PPT 下载入口；独立调试台按需展示完整 step trace。

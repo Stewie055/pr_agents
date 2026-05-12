@@ -121,6 +121,9 @@ class SQLiteRepository:
         self._put("artifact", artifact)
         return artifact
 
+    def get_artifact(self, artifact_id: str) -> AnalysisArtifact | None:
+        return self._get("artifact", artifact_id, AnalysisArtifact)
+
     def list_case_artifacts(self, case_id: str) -> list[AnalysisArtifact]:
         return [item for item in self._list("artifact", AnalysisArtifact) if item.case_id == case_id]
 

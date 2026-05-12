@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from semidiag.agent import AgentRuntime
@@ -13,6 +13,7 @@ from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.plugins import GenericEquipmentPlugin
 from semidiag.tools import build_default_registry
 
 
@@ -31,8 +32,15 @@ class AppState:
         root_path = Path(root)
         self.repository = SQLiteRepository(root_path / "semidiag.sqlite3")
         self.file_store = LocalFileStore(root_path / "files")
+        self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
-        self.agent = AgentRuntime(self.repository, registry=build_default_registry(), llm=llm_provider)
+        self.plugin = GenericEquipmentPlugin(generated_root=self.generated_root)
+        self.agent = AgentRuntime(
+            self.repository,
+            registry=build_default_registry(),
+            llm=llm_provider,
+            plugin=self.plugin,
+        )
 
 
 SENSITIVE_KEYS = {"authorization", "api_key", "apikey", "token", "secret", "password"}
@@ -112,6 +120,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
     def get_state() -> AppState:
         return app_state
 
+    def sse_event(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -155,6 +166,24 @@ def create_app(state: AppState | None = None) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{case_id}-trace.json"'},
         )
 
+    @app.get("/api/artifacts/{artifact_id}/file")
+    def get_artifact_file(artifact_id: str, current=Depends(get_state)):
+        artifact = current.repository.get_artifact(artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        file_path = artifact.data.get("file_path")
+        if not isinstance(file_path, str) or not file_path:
+            raise HTTPException(status_code=404, detail="artifact has no file")
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="artifact file not found")
+        media_type = artifact.data.get("mime_type")
+        return FileResponse(
+            path,
+            media_type=media_type if isinstance(media_type, str) else None,
+            filename=artifact.data.get("filename") if isinstance(artifact.data.get("filename"), str) else path.name,
+        )
+
     @app.post("/api/cases/{case_id}/files")
     async def upload_file(
         case_id: str,
@@ -191,6 +220,25 @@ def create_app(state: AppState | None = None) -> FastAPI:
             "artifacts": result.artifacts,
             "tool_traces": result.tool_traces,
         }
+
+    @app.post("/api/cases/{case_id}/messages/stream")
+    def stream_message(case_id: str, request: MessageRequest, current=Depends(get_state)):
+        def event_stream():
+            try:
+                for item in current.agent.stream_user_message(
+                    case_id=case_id,
+                    content=request.content,
+                    dataset_id=request.dataset_id,
+                ):
+                    yield sse_event(item.event, item.data)
+            except KeyError:
+                yield sse_event("error", {"detail": "case not found", "status_code": 404})
+            except LLMError as exc:
+                yield sse_event("error", {"detail": str(exc), "status_code": exc.status_code})
+            except Exception as exc:
+                yield sse_event("error", {"detail": str(exc), "status_code": 500})
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return app
 

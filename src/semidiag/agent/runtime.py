@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any
+from typing import Any, Iterator
 
 from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
 from semidiag.agent.memory import MemoryService
@@ -12,6 +12,7 @@ from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, St
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import GenericEquipmentPlugin
+from semidiag.plugins.base import DiagnosticPlugin
 from semidiag.tools import ToolContext, ToolRegistry, build_default_registry
 
 
@@ -21,6 +22,12 @@ class AgentTurnResult:
     artifacts: list[AnalysisArtifact]
     tool_traces: list[ToolCallTrace]
     summary: str
+
+
+@dataclass
+class AgentStreamEvent:
+    event: str
+    data: dict[str, Any]
 
 
 @dataclass
@@ -46,12 +53,13 @@ class AgentRuntime:
         registry: ToolRegistry | None = None,
         llm: LLMProvider | None = None,
         memory: MemoryService | None = None,
+        plugin: DiagnosticPlugin | None = None,
     ) -> None:
         self.repository = repository
         self.registry = registry or build_default_registry()
         self.llm = llm or StubLLMProvider()
         self.memory = memory or MemoryService()
-        self.plugin = GenericEquipmentPlugin()
+        self.plugin = plugin or GenericEquipmentPlugin()
         self.router = LLMRouter(self.llm)
         self.state_gate = StateGate()
 
@@ -101,6 +109,77 @@ class AgentRuntime:
             decision=decision,
         )
         return self._run_react_loop(
+            AgentState(
+                case_id=case_id,
+                user_content=content,
+                active_dataset_id=active_dataset_id,
+                decision=decision,
+                actor=actor,
+                messages=messages,
+                observations=[],
+            )
+        )
+
+    def stream_user_message(
+        self,
+        *,
+        case_id: str,
+        content: str,
+        dataset_id: str | None = None,
+        actor: str = "engineer",
+    ) -> Iterator[AgentStreamEvent]:
+        case = self.repository.get_case(case_id)
+        if case is None:
+            raise KeyError(case_id)
+        self.repository.add_message(AgentMessage(case_id=case_id, role="user", content=content))
+
+        datasets = self.repository.list_case_datasets(case_id)
+        active_dataset_id = dataset_id or (datasets[-1].id if datasets else None)
+        yield AgentStreamEvent(event="started", data={"message": "开始处理请求"})
+
+        route_context = self._build_route_context(case_id=case_id)
+        decision = self.router.route(user_content=content, context=route_context)
+        yield AgentStreamEvent(
+            event="route",
+            data={
+                "intent": decision.intent,
+                "requires_dataset": decision.requires_dataset,
+                "user_goal": decision.user_goal,
+                "reason": decision.reason,
+            },
+        )
+
+        gate = self.state_gate.check(decision=decision, context=route_context)
+        if not gate.allowed:
+            content_out = gate.message or "当前状态不满足执行条件。"
+            yield from self._stream_local_reply(
+                case_id=case_id,
+                content=content_out,
+                decision=decision,
+                llm_used=not isinstance(self.llm, StubLLMProvider),
+                blocked_by_state_gate=True,
+            )
+            return
+
+        if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
+            if isinstance(self.llm, StubLLMProvider):
+                yield from self._stream_local_reply(
+                    case_id=case_id,
+                    content=self._stub_non_tool_reply(decision=decision, has_dataset=active_dataset_id is not None),
+                    decision=decision,
+                    llm_used=False,
+                )
+                return
+            yield from self._stream_non_tool_llm_turn(case_id=case_id, content=content, decision=decision)
+            return
+
+        messages = self._build_llm_messages(
+            case_id=case_id,
+            user_content=content,
+            active_dataset_id=active_dataset_id,
+            decision=decision,
+        )
+        yield from self._run_react_loop_stream(
             AgentState(
                 case_id=case_id,
                 user_content=content,
@@ -230,6 +309,167 @@ class AgentRuntime:
         self.memory.update_midterm(state.case_id, content_out[:500])
         return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=content_out)
 
+    def _run_react_loop_stream(self, state: AgentState) -> Iterator[AgentStreamEvent]:
+        context = ToolContext(
+            case_id=state.case_id,
+            actor=state.actor,
+            repository=self.repository,
+            plugin=self.plugin,
+        )
+        tools = self.llm.tool_specs(self.registry)
+        call_counts: dict[str, int] = {}
+        final_content: str | None = None
+        streamed_final_content = ""
+
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=0,
+            phase="route",
+            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
+        )
+
+        for step_index in range(1, self.max_steps + 1):
+            state.step_count = step_index
+            started = perf_counter()
+            result, deltas = self._call_llm_for_plan_stream(case_id=state.case_id, messages=state.messages, tools=tools)
+            duration_ms = int((perf_counter() - started) * 1000)
+            for delta in deltas:
+                streamed_final_content += delta
+                yield AgentStreamEvent(event="message_delta", data={"delta": delta})
+
+            if not result.tool_calls:
+                final_content = result.content or streamed_final_content
+                state.stop_reason = "final_answer"
+                self._record_agent_step(
+                    case_id=state.case_id,
+                    step_index=step_index,
+                    phase="finalize",
+                    llm_metadata=self._step_llm_metadata(result.metadata),
+                    stop_reason=state.stop_reason,
+                    duration_ms=duration_ms,
+                )
+                break
+
+            assistant_tool_message = self.llm.assistant_plan_message(result)
+            state.messages.append(assistant_tool_message)
+            tool_observations: list[dict[str, Any]] = []
+            observation_messages: list[dict[str, Any]] = []
+
+            for call in result.tool_calls:
+                if self.registry.get_tool(call.name) is None:
+                    raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
+                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
+                call_counts[signature] = call_counts.get(signature, 0) + 1
+                if call_counts[signature] > self.max_repeated_tool_calls:
+                    state.stop_reason = "repeated_tool_call"
+                    final_content = (
+                        "我检测到模型在重复调用同一个工具，已停止继续执行。"
+                        "目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
+                    )
+                    break
+
+                arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
+                yield AgentStreamEvent(event="tool_start", data={"tool_name": call.name})
+                try:
+                    tool_result = self.registry.run(call.name, context, arguments)
+                    observation = self._tool_result_observation(call.name, tool_result)
+                    yield AgentStreamEvent(
+                        event="tool_result",
+                        data={
+                            "tool_name": call.name,
+                            "summary": observation.get("summary") or tool_result.summary,
+                            "artifact_ids": observation.get("artifact_ids", []),
+                            "evidence_ids": observation.get("evidence_ids", []),
+                        },
+                    )
+                    for artifact in tool_result.artifacts:
+                        yield AgentStreamEvent(
+                            event="artifact_created",
+                            data={
+                                "artifact": {
+                                    "id": artifact.id,
+                                    "kind": artifact.kind,
+                                    "title": artifact.title,
+                                    "summary": artifact.summary,
+                                    "data": artifact.data,
+                                }
+                            },
+                        )
+                except Exception as exc:
+                    observation = {
+                        "tool_name": call.name,
+                        "summary": f"Tool {call.name} failed: {exc}",
+                        "error": str(exc),
+                        "data": {},
+                        "artifact_ids": [],
+                        "evidence_ids": [],
+                        "next_suggestions": self._recovery_suggestions(call.name),
+                    }
+                    yield AgentStreamEvent(
+                        event="tool_result",
+                        data={"tool_name": call.name, "summary": observation["summary"], "error": str(exc)},
+                    )
+                tool_observations.append(observation)
+                state.observations.append(observation)
+                observation_messages.append(
+                    {"tool_call_id": call.id, "tool_name": call.name, "observation": observation}
+                )
+
+            self._record_agent_step(
+                case_id=state.case_id,
+                step_index=step_index,
+                phase="observe",
+                tool_calls=[
+                    {"id": call.id, "name": call.name, "arguments": call.arguments}
+                    for call in result.tool_calls
+                ],
+                observations=tool_observations,
+                llm_metadata=self._step_llm_metadata(result.metadata),
+                stop_reason=state.stop_reason,
+                duration_ms=duration_ms,
+            )
+
+            state.messages.extend(self.llm.tool_observation_messages(observation_messages))
+            if final_content:
+                break
+
+        if final_content is None:
+            state.stop_reason = state.stop_reason or "max_steps"
+            final_content = yield from self._finalize_from_observations_stream(state)
+            streamed_final_content = streamed_final_content or final_content
+
+        content_out = self._sanitize_user_visible_text(final_content)
+        if content_out and not streamed_final_content:
+            for part in self._split_stream_text(content_out):
+                yield AgentStreamEvent(event="message_delta", data={"delta": part})
+        artifacts = self.repository.list_case_artifacts(state.case_id)
+        tool_traces = self.repository.list_case_tool_traces(state.case_id)
+        assistant_message = self.repository.add_message(
+            AgentMessage(
+                case_id=state.case_id,
+                role="assistant",
+                content=content_out,
+                metadata=self._message_metadata(
+                    decision=state.decision,
+                    tool_count=len(tool_traces),
+                    artifact_count=len(artifacts),
+                    llm_used=True,
+                    step_count=state.step_count,
+                    stop_reason=state.stop_reason,
+                ),
+            )
+        )
+        self.memory.update_midterm(state.case_id, content_out[:500])
+        yield AgentStreamEvent(
+            event="final",
+            data={
+                "message": assistant_message.model_dump(mode="json"),
+                "summary": content_out,
+                "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+                "tool_traces": [trace.model_dump(mode="json") for trace in tool_traces],
+            },
+        )
+
     def _prepare_tool_arguments(self, tool_name: str, arguments: dict[str, Any], active_dataset_id: str | None) -> dict[str, Any]:
         prepared = dict(arguments)
         if tool_name in {"parse_dataset", "inspect_dataset", "profile_dataset", "build_trend_chart"}:
@@ -277,6 +517,32 @@ class AgentRuntime:
             }
         )
         result = self._call_llm_for_summary(case_id=state.case_id, messages=messages)
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=state.step_count,
+            phase="stop",
+            observations=state.observations[-3:],
+            llm_metadata=self._step_llm_metadata(result.metadata),
+            stop_reason=state.stop_reason,
+        )
+        return result.content or "已完成本轮分析，但模型未生成最终回复。请查看工具轨迹和证据结果。"
+
+    def _finalize_from_observations_stream(self, state: AgentState) -> Iterator[AgentStreamEvent | str]:
+        messages = list(state.messages)
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "已经达到本轮 Agent 最大工具步数。请只基于已有 observations 生成最终中文回复。"
+                    "不要输出任何 tool_calls、function call、DSML、XML、JSON 调用标记。"
+                    "说明已完成哪些分析、仍缺哪些数据，以及建议下一步。"
+                    f"Observations JSON: {json.dumps(state.observations, ensure_ascii=False)}"
+                ),
+            }
+        )
+        result, deltas = self._call_llm_for_summary_stream(case_id=state.case_id, messages=messages)
+        for delta in deltas:
+            yield AgentStreamEvent(event="message_delta", data={"delta": delta})
         self._record_agent_step(
             case_id=state.case_id,
             step_index=state.step_count,
@@ -496,6 +762,92 @@ class AgentRuntime:
         self.memory.update_midterm(case_id, clean_content[:500])
         return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=clean_content)
 
+    def _stream_local_reply(
+        self,
+        *,
+        case_id: str,
+        content: str,
+        decision: RouteDecision,
+        llm_used: bool,
+        blocked_by_state_gate: bool = False,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> Iterator[AgentStreamEvent]:
+        clean_content = self._sanitize_user_visible_text(content)
+        for part in self._split_stream_text(clean_content):
+            yield AgentStreamEvent(event="message_delta", data={"delta": part})
+        artifacts = self.repository.list_case_artifacts(case_id)
+        tool_traces = self.repository.list_case_tool_traces(case_id)
+        assistant_message = self.repository.add_message(
+            AgentMessage(
+                case_id=case_id,
+                role="assistant",
+                content=clean_content,
+                metadata=self._message_metadata(
+                    decision=decision,
+                    tool_count=0,
+                    artifact_count=len(artifacts),
+                    llm_used=llm_used,
+                    blocked_by_state_gate=blocked_by_state_gate,
+                    provider=provider,
+                    model=model,
+                ),
+            )
+        )
+        self.memory.update_midterm(case_id, clean_content[:500])
+        yield AgentStreamEvent(
+            event="final",
+            data={
+                "message": assistant_message.model_dump(mode="json"),
+                "summary": clean_content,
+                "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+                "tool_traces": [trace.model_dump(mode="json") for trace in tool_traces],
+            },
+        )
+
+    def _stream_non_tool_llm_turn(
+        self,
+        *,
+        case_id: str,
+        content: str,
+        decision: RouteDecision,
+    ) -> Iterator[AgentStreamEvent]:
+        messages = self._build_non_tool_messages(case_id=case_id, user_content=content, decision=decision)
+        result, deltas = self._call_llm_for_summary_stream(case_id=case_id, messages=messages)
+        clean_parts: list[str] = []
+        for delta in deltas:
+            clean_delta = self._sanitize_user_visible_text(delta)
+            clean_parts.append(clean_delta)
+            yield AgentStreamEvent(event="message_delta", data={"delta": clean_delta})
+        clean_content = self._sanitize_user_visible_text(result.content or "".join(clean_parts) or "我需要更多信息才能继续。")
+        artifacts = self.repository.list_case_artifacts(case_id)
+        tool_traces = self.repository.list_case_tool_traces(case_id)
+        assistant_message = self.repository.add_message(
+            AgentMessage(
+                case_id=case_id,
+                role="assistant",
+                content=clean_content,
+                metadata=self._message_metadata(
+                    decision=decision,
+                    tool_count=0,
+                    artifact_count=len(artifacts),
+                    llm_used=True,
+                    provider=self.llm.provider_name,
+                    model=self.llm.model,
+                ),
+            )
+        )
+        self.memory.update_midterm(case_id, clean_content[:500])
+        yield AgentStreamEvent(
+            event="final",
+            data={
+                "message": assistant_message.model_dump(mode="json"),
+                "summary": clean_content,
+                "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+                "tool_traces": [trace.model_dump(mode="json") for trace in tool_traces],
+            },
+        )
+
     def _build_route_context(self, *, case_id: str) -> CaseRouteContext:
         datasets = self.repository.list_case_datasets(case_id)
         return CaseRouteContext(
@@ -555,6 +907,21 @@ class AgentRuntime:
         sanitized = re.sub(r"\bmsg_[a-zA-Z0-9]+\b", "消息", sanitized)
         return sanitized
 
+    def _split_stream_text(self, content: str) -> list[str]:
+        if not content:
+            return []
+        parts = re.split(r"(\n|。|；|！|？)", content)
+        chunks: list[str] = []
+        current = ""
+        for part in parts:
+            current += part
+            if part in {"\n", "。", "；", "！", "？"} and current:
+                chunks.append(current)
+                current = ""
+        if current:
+            chunks.append(current)
+        return chunks or [content]
+
     def _call_llm_for_plan(
         self,
         *,
@@ -575,6 +942,35 @@ class AgentRuntime:
             duration_ms=int(result.metadata.get("duration_ms", 0)),
         )
         return result
+
+    def _call_llm_for_plan_stream(
+        self,
+        *,
+        case_id: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> tuple[Any, list[str]]:
+        deltas: list[str] = []
+        result = None
+        try:
+            for chunk in self.llm.plan_tool_calls_stream(messages=messages, tools=tools):
+                if chunk.event == "delta" and chunk.delta:
+                    deltas.append(chunk.delta)
+                elif chunk.event == "result":
+                    result = chunk.result
+        except LLMError as exc:
+            self._record_llm_audit(case_id=case_id, request={"messages": messages, "tool_specs": tools}, error=str(exc))
+            raise
+        if result is None:
+            raise LLMError("LLM stream ended without a planning result", status_code=502)
+        request_payload = result.metadata.get("request_payload")
+        self._record_llm_audit(
+            case_id=case_id,
+            request=request_payload if isinstance(request_payload, dict) else {"messages": messages, "tools": tools},
+            response=result.raw_response,
+            duration_ms=int(result.metadata.get("duration_ms", 0)),
+        )
+        return result, deltas
 
     def _record_agent_step(
         self,
@@ -622,6 +1018,29 @@ class AgentRuntime:
             duration_ms=int(result.metadata.get("duration_ms", 0)),
         )
         return result
+
+    def _call_llm_for_summary_stream(self, *, case_id: str, messages: list[dict[str, Any]]) -> tuple[Any, list[str]]:
+        deltas: list[str] = []
+        result = None
+        try:
+            for chunk in self.llm.summarize_turn_stream(messages=messages):
+                if chunk.event == "delta" and chunk.delta:
+                    deltas.append(chunk.delta)
+                elif chunk.event == "result":
+                    result = chunk.result
+        except LLMError as exc:
+            self._record_llm_audit(case_id=case_id, request={"messages": messages}, error=str(exc))
+            raise
+        if result is None:
+            raise LLMError("LLM stream ended without a summary result", status_code=502)
+        request_payload = result.metadata.get("request_payload")
+        self._record_llm_audit(
+            case_id=case_id,
+            request=request_payload if isinstance(request_payload, dict) else {"messages": messages},
+            response=result.raw_response,
+            duration_ms=int(result.metadata.get("duration_ms", 0)),
+        )
+        return result, deltas
 
     def _record_llm_audit(
         self,

@@ -7,6 +7,7 @@ export type DiagnosticCase = {
 
 export type AgentMessage = {
   id: string;
+  case_id?: string;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   metadata?: Record<string, unknown>;
@@ -25,6 +26,17 @@ export type ToolTrace = {
   tool_name: string;
   status: string;
   result_summary: string;
+};
+
+export type EvidenceItem = {
+  id: string;
+  title: string;
+  evidence_type?: string;
+  type?: string;
+  summary: string;
+  data?: Record<string, unknown>;
+  source_artifact_id?: string | null;
+  created_at?: string;
 };
 
 export type AgentStep = {
@@ -64,9 +76,20 @@ export type CaseSnapshot = {
   datasets: Array<{ id: string; filename: string }>;
   messages: AgentMessage[];
   artifacts: Artifact[];
+  evidence?: EvidenceItem[];
   tool_traces: ToolTrace[];
   agent_steps?: AgentStep[];
 };
+
+export type StreamEvent =
+  | { event: "started"; data: { message?: string } }
+  | { event: "route"; data: { intent: string; requires_dataset?: boolean; user_goal?: string; reason?: string } }
+  | { event: "tool_start"; data: { tool_name: string } }
+  | { event: "tool_result"; data: { tool_name: string; summary: string; error?: string; artifact_ids?: string[]; evidence_ids?: string[] } }
+  | { event: "artifact_created"; data: { artifact: Artifact } }
+  | { event: "message_delta"; data: { delta: string } }
+  | { event: "final"; data: { message: AgentMessage; summary: string; artifacts: Artifact[]; tool_traces: ToolTrace[] } }
+  | { event: "error"; data: { detail: string; status_code?: number } };
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -123,6 +146,71 @@ export async function sendMessage(caseId: string, content: string, datasetId?: s
   }>(response);
 }
 
+export async function streamMessage(
+  caseId: string,
+  content: string,
+  datasetId: string | undefined,
+  onEvent: (event: StreamEvent) => void
+): Promise<void> {
+  const response = await fetch(`/api/cases/${caseId}/messages/stream`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ content, dataset_id: datasetId })
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error("Streaming response is not readable");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed) {
+        onEvent(parsed);
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+  buffer += decoder.decode();
+  const parsed = parseSseBlock(buffer.trim());
+  if (parsed) {
+    onEvent(parsed);
+  }
+}
+
+function parseSseBlock(block: string): StreamEvent | null {
+  if (!block) {
+    return null;
+  }
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!dataLines.length) {
+    return null;
+  }
+  return { event, data: JSON.parse(dataLines.join("\n")) } as StreamEvent;
+}
+
 export async function getCaseTrace(caseId: string): Promise<CaseTrace> {
   const response = await fetch(`/api/cases/${caseId}/trace`);
   return parseResponse<CaseTrace>(response);
@@ -134,4 +222,8 @@ export async function exportCaseTrace(caseId: string): Promise<Blob> {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.blob();
+}
+
+export function artifactFileUrl(artifactId: string): string {
+  return `/api/artifacts/${artifactId}/file`;
 }

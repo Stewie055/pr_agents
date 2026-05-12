@@ -10,6 +10,14 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
+`ppt-template-sdk` 通过私有 Git SSH 依赖安装，环境需要能访问：
+
+```text
+git@github.com:Stewie055/ppt-template.git
+```
+
+如果部署环境暂时无法访问该仓库，PPT 生成代码会降级到 `python-pptx`，但正式业务模板接入应安装该 SDK。
+
 运行：
 
 ```bash
@@ -55,8 +63,10 @@ npm run build
 1. 新建插件类并继承 `DiagnosticPlugin`。
 2. 提供设备类型、展示名称和业务 Service。
 3. 在 Service 中实现解析、指标画像、诊断和报告。
-4. 将需要暴露给 Agent 的能力注册为 Tool。
-5. 为 Service、Tool、API 和前端展示补充测试。
+4. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
+5. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
+6. 将需要暴露给 Agent 的能力注册为 Tool。
+7. 为 Service、Tool、API 和前端展示补充测试。
 
 ## Change Rules
 

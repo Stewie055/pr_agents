@@ -18,9 +18,26 @@ CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
 """
 
 
+def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for block in payload.strip().split("\n\n"):
+        event = ""
+        data = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event = line.removeprefix("event:").strip()
+            if line.startswith("data:"):
+                data = line.removeprefix("data:").strip()
+        if event and data:
+            import json
+
+            events.append((event, json.loads(data)))
+    return events
+
+
 def test_api_case_upload_and_agent_message(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider())
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
     app = create_app(state)
     client = TestClient(app)
 
@@ -42,12 +59,54 @@ def test_api_case_upload_and_agent_message(tmp_path):
     body = response.json()
     assert body["message"]["role"] == "assistant"
     assert any(item["kind"] == "diagnosis" for item in body["artifacts"])
+    assert any(item["kind"] == "chart" and item["data"]["render_type"] == "image" for item in body["artifacts"])
     assert any(trace["tool_name"] == "diagnose_performance" for trace in body["tool_traces"])
+
+    chart = next(item for item in body["artifacts"] if item["kind"] == "chart" and item["data"]["render_type"] == "image")
+    chart_file = client.get(f"/api/artifacts/{chart['id']}/file")
+    assert chart_file.status_code == 200
+    assert chart_file.headers["content-type"].startswith("image/png")
+    assert chart_file.content.startswith(b"\x89PNG")
+
+
+def test_api_streams_agent_events(tmp_path):
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    app = create_app(state)
+    client = TestClient(app)
+    created = client.post("/api/cases", json={"title": "Streaming"}).json()
+    case_id = created["id"]
+    upload = client.post(
+        f"/api/cases/{case_id}/files",
+        files={"file": ("performance.csv", CSV_CONTENT, "text/csv")},
+    )
+    dataset_id = upload.json()["id"]
+
+    with client.stream(
+        "POST",
+        f"/api/cases/{case_id}/messages/stream",
+        json={"content": "请分析并诊断", "dataset_id": dataset_id},
+    ) as response:
+        body = response.read().decode()
+
+    assert response.status_code == 200
+    events = parse_sse_events(body)
+    names = [event for event, _ in events]
+    assert names[0] == "started"
+    assert "route" in names
+    assert "tool_start" in names
+    assert "tool_result" in names
+    assert "artifact_created" in names
+    assert "message_delta" in names
+    assert names[-1] == "final"
+    final = events[-1][1]
+    assert final["message"]["role"] == "assistant"
+    assert any(item["kind"] == "diagnosis" for item in final["artifacts"])
 
 
 def test_api_lists_tool_contracts(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider())
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
     app = create_app(state)
     client = TestClient(app)
 
@@ -56,6 +115,37 @@ def test_api_lists_tool_contracts(tmp_path):
     assert response.status_code == 200
     names = {tool["name"] for tool in response.json()["tools"]}
     assert {"parse_dataset", "profile_dataset", "diagnose_performance", "generate_report"} <= names
+
+
+def test_api_generates_downloadable_ppt_report(tmp_path):
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    app = create_app(state)
+    client = TestClient(app)
+    case = client.post("/api/cases", json={"title": "Report deck"}).json()
+    upload = client.post(
+        f"/api/cases/{case['id']}/files",
+        files={"file": ("performance.csv", CSV_CONTENT, "text/csv")},
+    )
+    dataset_id = upload.json()["id"]
+
+    response = client.post(
+        f"/api/cases/{case['id']}/messages",
+        json={"content": "请生成诊断报告", "dataset_id": dataset_id},
+    )
+
+    assert response.status_code == 200
+    reports = [item for item in response.json()["artifacts"] if item["kind"] == "report"]
+    assert reports
+    report = reports[-1]
+    assert report["data"]["format"] == "pptx"
+    assert report["data"]["template_engine"] in {"ppt_template_sdk", "python-pptx"}
+    ppt = client.get(f"/api/artifacts/{report['id']}/file")
+    assert ppt.status_code == 200
+    assert ppt.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    assert ppt.content.startswith(b"PK")
 
 
 def test_trace_api_returns_debug_data_with_redaction(tmp_path):

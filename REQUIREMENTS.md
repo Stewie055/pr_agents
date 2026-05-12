@@ -12,6 +12,7 @@
 - Agent 必须先通过 LLM Router/Triage 理解用户意图，支持聊天、资料问答、数据分析、诊断、报告和 Workflow 请求等路径。
 - 系统本地 State Gate 只负责确定性约束，例如是否已有数据集、工具是否可用、是否需要审批。
 - 分析、诊断、报告路径必须使用 ReAct/Graph 执行模型，允许多轮工具调用、观察和继续推理。
+- 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、产物生成和最终回复增量。
 - Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
 - 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
 - 用户可见回复默认不暴露内部 case/dataset/artifact id。
@@ -19,9 +20,13 @@
 - Workflow 是核心能力，支持从一次诊断沉淀为可复用流程，并支持批处理和定时报告。
 - LLM 内网/本地优先，敏感设备数据默认不出内网。
 - 真实 LLM 通过 OpenAI-compatible `/v1/chat/completions` 接入，支持原生 tool calling 和 prompt-xml-json 文本工具协议两种模式。
+- OpenAI-compatible LLMProvider 必须支持 `stream=true`，包括文本 delta、native tool-call delta 累积和 prompt-xml-json 文本流解析。
 - LLM 上下文只发送案例摘要、Artifact 元数据、Evidence 和工具结果摘要，不发送原始文件行级数据。
 - 完整记录 LLM prompt/request/response 审计内容，密钥和认证头不得落库。
 - 系统必须提供独立 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出；主诊断界面默认只展示用户可见信息。
+- 主诊断界面必须固定视口工作区，聊天区和右侧工作台独立滚动，避免长回复撑高整个页面。
+- 业务图表由 Service 层使用 Matplotlib 或业务绘图库生成图片文件，Artifact 必须提供可下载/可预览的文件 URL；前端必须支持多图切换展示。
+- 报告输出以 PPTX 为主，优先使用 `ppt-template-sdk` 模板渲染；报告 Artifact 必须包含格式、MIME、文件 URL 和结构化章节摘要。
 - 原始文件保留版本，结构化性能指标长期进入 ClickHouse。
 - 元数据先用 SQLite 起步，并保持 PostgreSQL 迁移兼容。
 - RAG 通过抽象接口接入，长期支持可替换向量库。
@@ -39,10 +44,14 @@
 - Stub LLM provider。
 - OpenAI-compatible LLM provider。
 - Native tools / prompt-xml-json LLM tool mode。
+- LLMProvider streaming and Agent SSE event stream。
 - LLM prompt/request/response audit。
 - LLM Router/Triage and deterministic State Gate。
 - ReAct multi-step tool loop and AgentStepTrace。
 - Trace debug API and WebUI debug console。
+- Stream-first WebUI with independent chat scrolling and right-side diagnostic workspace。
+- Matplotlib PNG chart artifacts and chart gallery。
+- PPTX report artifacts with `ppt-template-sdk` integration and file download API。
 - Agent runtime and Tool Registry。
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.

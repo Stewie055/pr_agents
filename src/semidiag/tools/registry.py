@@ -207,7 +207,7 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="build_trend_chart",
-            description="Build chart-ready trend data for numeric equipment metrics when the user needs trend or visual analysis.",
+            description="Generate Matplotlib PNG trend charts for numeric equipment metrics when the user needs visual analysis.",
             input_schema={
                 "type": "object",
                 "properties": {"dataset_id": {"type": "string", "description": "Dataset id uploaded to the current case."}},
@@ -329,24 +329,37 @@ def _profile_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolRes
 
 def _build_trend_chart(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
     dataset = _dataset(context, arguments["dataset_id"])
-    artifact = context.plugin.diagnostic_service().build_chart(
+    artifacts = context.plugin.diagnostic_service().build_chart(
         case_id=context.case_id,
         dataset_id=dataset.id,
         path=dataset.path,
     )
+    chart_artifacts = [artifact for artifact in artifacts if artifact.kind == "chart"]
+    image_charts = [artifact for artifact in chart_artifacts if artifact.data.get("render_type") == "image"]
+    summary = f"Generated {len(image_charts)} Matplotlib chart file(s)." if image_charts else artifacts[0].summary
     return ToolResult(
-        summary=artifact.summary,
-        artifacts=[artifact],
-        payload={"artifact_id": artifact.id},
+        summary=summary,
+        artifacts=artifacts,
+        payload={"artifact_ids": [artifact.id for artifact in artifacts]},
         observation=ToolObservation(
             tool_name="build_trend_chart",
-            summary=artifact.summary,
+            summary=summary,
             data={
-                "chart_type": artifact.data.get("type"),
-                "series_names": [item.get("name") for item in artifact.data.get("series", [])],
-                "point_count": len(artifact.data.get("x", [])),
+                "render_type": "image" if image_charts else "none",
+                "chart_count": len(image_charts),
+                "charts": [
+                    {
+                        "title": artifact.title,
+                        "figure_kind": artifact.data.get("figure_kind"),
+                        "display_group": artifact.data.get("display_group"),
+                        "series_names": artifact.data.get("series_names", []),
+                        "point_count": artifact.data.get("point_count", 0),
+                        "mime_type": artifact.data.get("mime_type"),
+                    }
+                    for artifact in image_charts
+                ],
             },
-            artifact_ids=[artifact.id],
+            artifact_ids=[artifact.id for artifact in artifacts],
             next_suggestions=["diagnose_performance"],
         ),
     )
@@ -403,6 +416,9 @@ def _generate_report(context: ToolContext, arguments: dict[str, Any]) -> ToolRes
             data={
                 "sections": [section.get("heading") for section in artifact.data.get("sections", [])],
                 "format": artifact.data.get("format"),
+                "mime_type": artifact.data.get("mime_type"),
+                "chart_count": artifact.data.get("chart_count", 0),
+                "template_engine": artifact.data.get("template_engine"),
             },
             artifact_ids=[artifact.id],
         ),
