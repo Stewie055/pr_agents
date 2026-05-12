@@ -58,6 +58,7 @@ DeepSeek V4 thinking mode 会在 tool-call 轮次返回 `reasoning_content`。�
 - `<final_answer>`: Runtime 停止 ReAct loop 并清洗最终回复。
 
 Runtime 的工具执行、Observation、重复调用保护和 max step 策略与 native 模式一致。
+同步与流式 ReAct 路径共享 route trace、重复调用停止提示、assistant 消息持久化和 final payload 生成逻辑，避免两条链路行为漂移。
 
 XML+JSON 解析由独立 parser 负责。缺失动作块、同时出现 `<tool_calls>` 和 `<final_answer>`、多个 tool call 块、非法 JSON、空工具列表或非 object arguments 都会返回明确错误；首次格式错误会触发一次修复重试，并在 trace/audit 中保留可调试信息。
 

@@ -7,7 +7,7 @@
 ## Key Work
 
 - 拆分 LLM 层：公共 contract、prompt XML+JSON parser 和 audit redaction 独立维护；后续继续拆 OpenAI HTTP client 与 native tool protocol。
-- 拆分 Agent Runtime：同步和流式 ReAct 共享工具执行、Observation、停止条件和最终消息持久化逻辑。
+- 拆分 Agent Runtime：同步和流式 ReAct 共享 route trace、重复调用停止提示、最终消息持久化和 final payload；后续继续收敛工具执行与 Observation。
 - 增加工程质量命令：后端测试、前端测试、前端构建、静态检查入口。
 - 增加 CI，覆盖后端 pytest、前端 Vitest 和前端 build。
 - 当前质量门禁入口为 `bash scripts/check.sh`，CI 位于 `.github/workflows/ci.yml`。

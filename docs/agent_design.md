@@ -37,6 +37,7 @@ Stub 模式根据消息内容选择工具序列：
 5. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。
 
 主界面通过 SSE 消费同一条 Runtime 链路，实时展示路由、工具执行、Artifact 生成和最终回复增量；同步接口仍复用同一套 ReAct 逻辑。
+同步和流式接口的最终消息落库、Artifact/ToolTrace 汇总和停止原因元数据使用共享 Runtime helper，避免用户界面与 API 回归测试看到不同结果。
 
 模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
 

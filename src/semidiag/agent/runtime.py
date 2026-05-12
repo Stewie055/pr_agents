@@ -193,22 +193,12 @@ class AgentRuntime:
         )
 
     def _run_react_loop(self, state: AgentState) -> AgentTurnResult:
-        context = ToolContext(
-            case_id=state.case_id,
-            actor=state.actor,
-            repository=self.repository,
-            plugin=self.plugin,
-        )
+        context = self._tool_context(state)
         tools = self.llm.tool_specs(self.registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
 
-        self._record_agent_step(
-            case_id=state.case_id,
-            step_index=0,
-            phase="route",
-            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
-        )
+        self._record_route_decision(state)
 
         for step_index in range(1, self.max_steps + 1):
             state.step_count = step_index
@@ -241,10 +231,7 @@ class AgentRuntime:
                 call_counts[signature] = call_counts.get(signature, 0) + 1
                 if call_counts[signature] > self.max_repeated_tool_calls:
                     state.stop_reason = "repeated_tool_call"
-                    final_content = (
-                        "我检测到模型在重复调用同一个工具，已停止继续执行。"
-                        "目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
-                    )
+                    final_content = self._repeated_tool_call_message()
                     break
 
                 arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
@@ -290,44 +277,16 @@ class AgentRuntime:
             final_content = self._finalize_from_observations(state)
 
         content_out = self._sanitize_user_visible_text(final_content)
-        artifacts = self.repository.list_case_artifacts(state.case_id)
-        tool_traces = self.repository.list_case_tool_traces(state.case_id)
-        assistant_message = self.repository.add_message(
-            AgentMessage(
-                case_id=state.case_id,
-                role="assistant",
-                content=content_out,
-                metadata=self._message_metadata(
-                    decision=state.decision,
-                    tool_count=len(tool_traces),
-                    artifact_count=len(artifacts),
-                    llm_used=True,
-                    step_count=state.step_count,
-                    stop_reason=state.stop_reason,
-                ),
-            )
-        )
-        self.memory.update_midterm(state.case_id, content_out[:500])
-        return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=content_out)
+        return self._persist_react_result(state=state, content_out=content_out)
 
     def _run_react_loop_stream(self, state: AgentState) -> Iterator[AgentStreamEvent]:
-        context = ToolContext(
-            case_id=state.case_id,
-            actor=state.actor,
-            repository=self.repository,
-            plugin=self.plugin,
-        )
+        context = self._tool_context(state)
         tools = self.llm.tool_specs(self.registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
         streamed_final_content = ""
 
-        self._record_agent_step(
-            case_id=state.case_id,
-            step_index=0,
-            phase="route",
-            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
-        )
+        self._record_route_decision(state)
 
         for step_index in range(1, self.max_steps + 1):
             state.step_count = step_index
@@ -363,10 +322,7 @@ class AgentRuntime:
                 call_counts[signature] = call_counts.get(signature, 0) + 1
                 if call_counts[signature] > self.max_repeated_tool_calls:
                     state.stop_reason = "repeated_tool_call"
-                    final_content = (
-                        "我检测到模型在重复调用同一个工具，已停止继续执行。"
-                        "目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
-                    )
+                    final_content = self._repeated_tool_call_message()
                     break
 
                 arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
@@ -443,6 +399,28 @@ class AgentRuntime:
         if content_out and not streamed_final_content:
             for part in self._split_stream_text(content_out):
                 yield AgentStreamEvent(event="message_delta", data={"delta": part})
+        yield self._react_final_event(state=state, content_out=content_out)
+
+    def _tool_context(self, state: AgentState) -> ToolContext:
+        return ToolContext(
+            case_id=state.case_id,
+            actor=state.actor,
+            repository=self.repository,
+            plugin=self.plugin,
+        )
+
+    def _record_route_decision(self, state: AgentState) -> None:
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=0,
+            phase="route",
+            observations=[{"route_decision": state.decision.model_dump(mode="json")}],
+        )
+
+    def _repeated_tool_call_message(self) -> str:
+        return "我检测到模型在重复调用同一个工具，已停止继续执行。目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
+
+    def _persist_react_result(self, *, state: AgentState, content_out: str) -> AgentTurnResult:
         artifacts = self.repository.list_case_artifacts(state.case_id)
         tool_traces = self.repository.list_case_tool_traces(state.case_id)
         assistant_message = self.repository.add_message(
@@ -461,13 +439,17 @@ class AgentRuntime:
             )
         )
         self.memory.update_midterm(state.case_id, content_out[:500])
-        yield AgentStreamEvent(
+        return AgentTurnResult(message=assistant_message, artifacts=artifacts, tool_traces=tool_traces, summary=content_out)
+
+    def _react_final_event(self, *, state: AgentState, content_out: str) -> AgentStreamEvent:
+        result = self._persist_react_result(state=state, content_out=content_out)
+        return AgentStreamEvent(
             event="final",
             data={
-                "message": assistant_message.model_dump(mode="json"),
-                "summary": content_out,
-                "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
-                "tool_traces": [trace.model_dump(mode="json") for trace in tool_traces],
+                "message": result.message.model_dump(mode="json"),
+                "summary": result.summary,
+                "artifacts": [artifact.model_dump(mode="json") for artifact in result.artifacts],
+                "tool_traces": [trace.model_dump(mode="json") for trace in result.tool_traces],
             },
         )
 
