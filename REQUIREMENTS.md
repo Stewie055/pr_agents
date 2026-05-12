@@ -59,6 +59,7 @@
 - CI quality gate covering backend lint/tests and frontend typecheck/tests/build.
 - Diagnostic plugin registry with `equipment_type` based plugin resolution.
 - Structured metric repository contract with SQLite default implementation and ClickHouse adapter target.
+- In-process task queue foundation with task status API for future long-running analysis, chart, report, and workflow jobs.
 
 ## Non-Goals For Current Slice
 

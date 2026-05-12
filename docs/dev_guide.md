@@ -84,3 +84,12 @@ bash scripts/check.sh
 - 每次功能完成后必须执行对应测试。
 - 每次修改设计或行为后必须更新 `README.md`、`REQUIREMENTS.md` 和 `docs/`。
 - 产品化推进计划记录在 `plans/`，每个阶段或可独立验证的子阶段完成后单独提交 Git。
+
+## Tasks
+
+`InProcessTaskQueue` 是首版长任务基础设施，当前用于本地部署和测试。任务状态 API：
+
+- `GET /api/tasks`
+- `GET /api/tasks/{task_id}`
+
+后续解析、绘图、PPT 和 Workflow 批处理应逐步迁移到该接口背后的任务抽象。

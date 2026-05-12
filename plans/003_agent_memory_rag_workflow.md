@@ -6,8 +6,8 @@
 
 ## Key Work
 
-- 使用进程内任务队列实现解析、绘图、PPT、批处理等长任务的状态管理。
-- 增加任务状态 API：pending、running、succeeded、failed、cancelled。
+- 使用进程内任务队列实现解析、绘图、PPT、批处理等长任务的状态管理。当前 `InProcessTaskQueue` 基础设施已完成。
+- 增加任务状态 API：pending、running、succeeded、failed、cancelled。当前 `GET /api/tasks` 和 `GET /api/tasks/{task_id}` 已完成。
 - Workflow 首版支持从一次诊断沉淀为步骤模板，并手动触发重放。
 - 中期记忆持久化到 SQLite。
 - 长期知识库提供抽象接口，默认本地实现支持文档摘要检索和来源引用。

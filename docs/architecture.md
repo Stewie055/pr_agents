@@ -20,6 +20,7 @@ Vue/Vite WebUI
 - Service 层实现解析、清洗、统计、建模、Matplotlib 绘图、规则诊断和 PPT 报告生成。
 - Infrastructure 提供 SQLite、原始文件存储、生成文件存储、未来 ClickHouse、RAG 和任务队列适配。
 - 结构化指标通过 `MetricRepository` 写入，当前默认 SQLite 实现用于本地开发和测试，后续 ClickHouse adapter 应实现同一接口。
+- 长任务通过 `InProcessTaskQueue` 起步，当前提供任务状态 API；后续解析、绘图、PPT 和 Workflow 批处理逐步迁移到任务队列。
 
 ## Diagnostic Case
 

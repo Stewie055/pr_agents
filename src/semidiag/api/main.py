@@ -15,6 +15,7 @@ from semidiag.config import load_llm_config
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.infrastructure.tasks import InProcessTaskQueue
 from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.tools import build_default_registry
 
@@ -34,6 +35,7 @@ class AppState:
         root_path = Path(root)
         self.repository = SQLiteRepository(root_path / "semidiag.sqlite3")
         self.metric_repository = SQLiteMetricRepository(root_path / "metrics.sqlite3")
+        self.task_queue = InProcessTaskQueue()
         self.file_store = LocalFileStore(root_path / "files")
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
@@ -144,6 +146,17 @@ def create_app(state: AppState | None = None) -> FastAPI:
                 for plugin in current.plugin_registry.list_plugins()
             ]
         }
+
+    @app.get("/api/tasks")
+    def list_tasks(current=Depends(get_state)):
+        return {"tasks": [task.model_dump(mode="json") for task in current.task_queue.list_tasks()]}
+
+    @app.get("/api/tasks/{task_id}")
+    def get_task(task_id: str, current=Depends(get_state)):
+        task = current.task_queue.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        return task
 
     @app.post("/api/cases")
     def create_case(request: CreateCaseRequest, current=Depends(get_state)):
