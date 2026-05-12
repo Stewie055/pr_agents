@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class LLMConfig(BaseModel):
-    provider: Literal["stub", "openai_compatible"] = "stub"
+    provider: Literal["openai_compatible"] = "openai_compatible"
     tool_mode: Literal["native", "prompt_xml_json"] = "native"
     base_url: str = "http://localhost:8001/v1"
     api_key: str | None = None
@@ -18,7 +18,7 @@ class LLMConfig(BaseModel):
 
     @property
     def is_real_llm(self) -> bool:
-        return self.provider == "openai_compatible"
+        return True
 
 
 def load_dotenv(path: Path | str = ".env") -> None:
@@ -38,7 +38,7 @@ def load_dotenv(path: Path | str = ".env") -> None:
 def load_llm_config(dotenv_path: Path | str = ".env") -> LLMConfig:
     load_dotenv(dotenv_path)
     return LLMConfig(
-        provider=os.getenv("SEMIDIAG_LLM_PROVIDER", "stub"),  # type: ignore[arg-type]
+        provider=os.getenv("SEMIDIAG_LLM_PROVIDER", "openai_compatible"),  # type: ignore[arg-type]
         tool_mode=os.getenv("SEMIDIAG_LLM_TOOL_MODE", "native"),  # type: ignore[arg-type]
         base_url=os.getenv("SEMIDIAG_LLM_BASE_URL", "http://localhost:8001/v1"),
         api_key=os.getenv("SEMIDIAG_LLM_API_KEY"),

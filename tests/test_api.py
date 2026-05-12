@@ -3,10 +3,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from semidiag.agent import AgentRuntime
-from semidiag.agent.llm import StubLLMProvider
 from semidiag.api.main import AppState, create_app
 from semidiag.domain import AgentStepTrace, LLMAuditEvent
 from semidiag.tools import build_default_registry
+from tests.fakes import DeterministicLLMProvider
 
 CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
 1,70,10,100
@@ -39,7 +39,7 @@ def test_api_case_upload_and_agent_message(tmp_path):
     state.agent = AgentRuntime(
         state.repository,
         registry=build_default_registry(),
-        llm=StubLLMProvider(),
+        llm=DeterministicLLMProvider(),
         plugin=state.plugin,
         metric_repository=state.metric_repository,
     )
@@ -80,7 +80,7 @@ def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
     state.agent = AgentRuntime(
         state.repository,
         registry=state.tool_registry,
-        llm=StubLLMProvider(),
+        llm=DeterministicLLMProvider(),
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
@@ -107,7 +107,7 @@ def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
 
 def test_api_streams_agent_events(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
     app = create_app(state)
     client = TestClient(app)
     created = client.post("/api/cases", json={"title": "Streaming"}).json()
@@ -142,7 +142,7 @@ def test_api_streams_agent_events(tmp_path):
 
 def test_api_lists_tool_contracts(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
     app = create_app(state)
     client = TestClient(app)
 
@@ -167,7 +167,7 @@ def test_api_lists_diagnostic_plugins(tmp_path):
 
 def test_api_generates_downloadable_ppt_report(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=StubLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
     app = create_app(state)
     client = TestClient(app)
     case = client.post("/api/cases", json={"title": "Report deck"}).json()
@@ -201,7 +201,7 @@ def test_api_creates_and_runs_workflow_from_case(tmp_path):
     state.agent = AgentRuntime(
         state.repository,
         registry=build_default_registry(),
-        llm=StubLLMProvider(),
+        llm=DeterministicLLMProvider(),
         plugin=state.plugin,
         metric_repository=state.metric_repository,
     )

@@ -15,7 +15,7 @@
 - Workflow 模板基础，可从案例工具轨迹沉淀并手动重放
 - 仓库内 `business/` 扩展加载，支持业务 Tool 和 LT 测校项 Plugin 单文件注册
 - Plugin-scoped tools：Agent 每轮只看到公共工具和被选中测校项插件提供的工具
-- Stub LLM / OpenAI-compatible LLM + Agent runtime + Tool Registry
+- OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要
 - 本地知识库记录和关键词检索 API，供资料问答路径使用
@@ -85,7 +85,7 @@ SEMIDIAG_LLM_MODEL=deepseek-v4-flash
 SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 ```
 
-不想连接真实模型时，把 `SEMIDIAG_LLM_PROVIDER` 改成 `stub`。
+生产运行时不再提供离线 stub provider；本地开发也需要配置 OpenAI-compatible LLM。自动化测试使用测试专用 fake provider，不依赖真实密钥。
 
 如果模型部署不支持 OpenAI `tools/tool_choice`，把 `SEMIDIAG_LLM_TOOL_MODE` 改成 `prompt_xml_json`。该模式不会向 LLM 请求体发送 `tools` 字段，而是用 XML 标签做动作边界、JSON 承载工具列表和参数，驱动同一个 ReAct loop。
 

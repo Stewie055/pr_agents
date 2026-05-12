@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
-from semidiag.plugins.calibration import CalibrationPluginManifest, CalibrationPluginRegistry, CalibrationSelection
+from semidiag.agent.llm import LLMError, LLMProvider
+from semidiag.plugins.calibration import CalibrationPluginRegistry, CalibrationSelection
 
 
 @dataclass
@@ -28,8 +28,6 @@ class PluginSelectorAgent:
         manifests = self.registry.list_manifests()
         if not manifests:
             return CalibrationSelection(reason="No calibration plugins loaded.")
-        if isinstance(self.llm, StubLLMProvider):
-            return self._select_locally(context=context, manifests=manifests)
 
         messages = [
             {
@@ -65,29 +63,6 @@ class PluginSelectorAgent:
         except (TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
             raise LLMError(f"Plugin selector returned invalid JSON: {exc}", status_code=502) from exc
         return self._filter_existing(selection)
-
-    def _select_locally(
-        self,
-        *,
-        context: PluginSelectionContext,
-        manifests: list[CalibrationPluginManifest],
-    ) -> CalibrationSelection:
-        selected: list[str] = []
-        normalized = context.user_content.lower()
-        log_kinds = set(context.log_kinds)
-        for manifest in manifests:
-            if manifest.log_kinds and not log_kinds.intersection(manifest.log_kinds):
-                continue
-            if context.scenario and manifest.scenarios and context.scenario not in manifest.scenarios:
-                continue
-            haystack = f"{manifest.plugin_id} {manifest.display_name} {manifest.description}".lower()
-            if any(token in haystack for token in normalized.split() if len(token) > 1) or not selected:
-                selected.append(manifest.plugin_id)
-            if len(selected) >= self.max_plugins:
-                break
-        if not selected:
-            return CalibrationSelection(reason="No calibration plugin matched current logs and request.", confidence=0.0)
-        return CalibrationSelection(plugin_ids=selected, reason="Matched calibration plugin manifest and log metadata.", confidence=0.7)
 
     def _filter_existing(self, selection: CalibrationSelection) -> CalibrationSelection:
         existing = {manifest.plugin_id for manifest in self.registry.list_manifests()}

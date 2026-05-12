@@ -14,21 +14,12 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 
 ## Runtime
 
-`AgentRuntime` 支持两种 LLM provider：
+`AgentRuntime` 生产运行时只支持 OpenAI-compatible LLM provider：
 
-- `StubLLMProvider`：未配置真实 LLM 时的离线模式，根据消息内容选择固定工具序列。
 - `OpenAINativeToolProvider`：调用 OpenAI-compatible `/v1/chat/completions`，使用原生 `tools/tool_choice`。
 - `OpenAIPromptXmlJsonProvider`：调用同一接口，但不发送 `tools/tool_choice`，使用 XML+JSON 文本工具协议。
 
-Stub 模式根据消息内容选择工具序列：
-
-- 数据解析。
-- 指标画像。
-- 趋势图数据生成。
-- 初步性能诊断。
-- 报告草稿生成。
-
-真实 LLM 模式执行 ReAct/Graph 流程：
+自动化测试使用 `tests/fakes.py` 中的测试专用 fake provider 驱动确定性流程，不进入生产代码。运行时执行 ReAct/Graph 流程：
 
 1. LLM Router/Triage 先输出结构化 `RouteDecision`。
 2. State Gate 检查当前状态是否满足该路径，例如分析/诊断/报告是否已有数据集。
@@ -41,7 +32,7 @@ Stub 模式根据消息内容选择工具序列：
 主界面通过 SSE 消费同一条 Runtime 链路，实时展示路由、工具执行、Artifact 生成和最终回复增量；同步接口仍复用同一套 ReAct 逻辑。
 同步和流式接口的最终消息落库、Artifact/ToolTrace 汇总和停止原因元数据使用共享 Runtime helper，避免用户界面与 API 回归测试看到不同结果。
 
-模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级 stub。只有未配置真实 LLM 时才使用 stub。
+模型失败、超时、非法 tool call 或未知工具时，API 返回错误，不自动降级到离线 provider。
 
 `SEMIDIAG_LLM_TOOL_MODE=prompt_xml_json` 用于未开启 auto-tool-choice 的部署。该模式不发送 `tools/tool_choice`，通过 `<available_tools>` 注入工具列表，通过 `<tool_calls>` / `<final_answer>` 做动作边界，但 Runtime 仍解析成统一的 `LLMToolCall` 并复用同一套工具执行链路。
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
+from semidiag.agent.llm import LLMError, LLMProvider
 from semidiag.agent.memory import MemoryService
 from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, StateGate
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
@@ -62,8 +62,8 @@ class AgentRuntime:
     def __init__(
         self,
         repository: SQLiteRepository,
+        llm: LLMProvider,
         registry: ToolRegistry | None = None,
-        llm: LLMProvider | None = None,
         memory: MemoryService | None = None,
         plugin: DiagnosticPlugin | None = None,
         plugin_registry: PluginRegistry | None = None,
@@ -72,7 +72,7 @@ class AgentRuntime:
     ) -> None:
         self.repository = repository
         self.registry = registry or build_default_registry()
-        self.llm = llm or StubLLMProvider()
+        self.llm = llm
         self.memory = memory or MemoryService(repository)
         self.plugin = plugin or GenericEquipmentPlugin()
         self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
@@ -105,17 +105,8 @@ class AgentRuntime:
                 case_id=case_id,
                 content=gate.message or "当前状态不满足执行条件。",
                 decision=decision,
-                llm_used=not isinstance(self.llm, StubLLMProvider),
+                llm_used=True,
                 blocked_by_state_gate=True,
-            )
-
-        if isinstance(self.llm, StubLLMProvider):
-            return self._handle_stub_turn(
-                case_id=case_id,
-                content=content,
-                active_dataset_id=active_dataset_id,
-                actor=actor,
-                decision=decision,
             )
 
         if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
@@ -178,20 +169,12 @@ class AgentRuntime:
                 case_id=case_id,
                 content=content_out,
                 decision=decision,
-                llm_used=not isinstance(self.llm, StubLLMProvider),
+                llm_used=True,
                 blocked_by_state_gate=True,
             )
             return
 
         if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
-            if isinstance(self.llm, StubLLMProvider):
-                yield from self._stream_local_reply(
-                    case_id=case_id,
-                    content=self._stub_non_tool_reply(decision=decision, has_dataset=active_dataset_id is not None),
-                    decision=decision,
-                    llm_used=False,
-                )
-                return
             yield from self._stream_non_tool_llm_turn(case_id=case_id, content=content, decision=decision)
             return
 
@@ -601,70 +584,6 @@ class AgentRuntime:
         )
         return result.content or "已完成本轮分析，但模型未生成最终回复。请查看工具轨迹和证据结果。"
 
-    def _handle_stub_turn(
-        self,
-        *,
-        case_id: str,
-        content: str,
-        active_dataset_id: str | None,
-        actor: str,
-        decision: RouteDecision,
-    ) -> AgentTurnResult:
-        if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
-            return self._local_reply(
-                case_id=case_id,
-                content=self._stub_non_tool_reply(decision=decision, has_dataset=active_dataset_id is not None),
-                decision=decision,
-                llm_used=False,
-            )
-
-        tool_names = self.llm.plan_tools(content, has_dataset=active_dataset_id is not None)  # type: ignore[attr-defined]
-        context = ToolContext(
-            case_id=case_id,
-            actor=actor,
-            repository=self.repository,
-            plugin=self._resolve_plugin(case_id),
-            metric_repository=self.metric_repository,
-        )
-        summaries: list[str] = []
-        for name in tool_names:
-            arguments: dict[str, Any] = {}
-            if name in {"parse_dataset", "profile_dataset", "build_trend_chart"}:
-                arguments["dataset_id"] = active_dataset_id
-            result = self.registry.run(name, context, arguments)
-            summaries.append(f"{name}: {result.summary}")
-
-        artifacts = self.repository.list_case_artifacts(case_id)
-        tool_traces = self.repository.list_case_tool_traces(case_id)
-        if summaries:
-            content_out = (
-                "已完成设备性能辅助诊断。请在证据链和报告草稿基础上进行工程师确认。\n"
-                + "\n".join(f"- {summary}" for summary in summaries)
-            )
-        else:
-            content_out = "请先上传设备性能数据文件，之后我可以执行解析、画像、趋势和辅助诊断。"
-
-        assistant_message = self.repository.add_message(
-            AgentMessage(
-                case_id=case_id,
-                role="assistant",
-                content=content_out,
-                metadata=self._message_metadata(
-                    decision=decision,
-                    tool_count=len(tool_names),
-                    artifact_count=len(artifacts),
-                    llm_used=False,
-                ),
-            )
-        )
-        self.memory.update_midterm(case_id, content_out[:500])
-        return AgentTurnResult(
-            message=assistant_message,
-            artifacts=artifacts,
-            tool_traces=tool_traces,
-            summary=content_out,
-        )
-
     def _build_llm_messages(
         self,
         *,
@@ -941,17 +860,6 @@ class AgentRuntime:
             "llm_model": model or self.llm.model,
             "llm_tool_mode": getattr(self.llm, "tool_mode", "unknown"),
         }
-
-    def _stub_non_tool_reply(self, *, decision: RouteDecision, has_dataset: bool) -> str:
-        if decision.intent == "chat_response":
-            if has_dataset:
-                return "你好。当前数据已就绪，可以直接告诉我你想分析的问题。"
-            return "你好。请先上传设备性能 CSV，上传后我可以开始分析。"
-        if decision.intent == "knowledge_qa":
-            return "我可以回答设备性能诊断相关资料问题；如果本地知识库有命中，我会优先引用本地资料。"
-        if decision.intent == "workflow_request":
-            return "Workflow 能力还在规划中。当前可以先完成单次数据分析和诊断。"
-        return "我需要更多信息才能继续。你可以上传数据文件，或描述想分析的问题。"
 
     def _sanitize_user_visible_text(self, content: str) -> str:
         sanitized = re.sub(r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", "", content, flags=re.DOTALL)

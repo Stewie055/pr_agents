@@ -26,7 +26,7 @@ semidiag-api
 
 默认监听 `0.0.0.0:8000`。
 
-本地默认 LLM 配置使用 DeepSeek V4 Flash。复制 `.env.example` 为 `.env`，填写 `SEMIDIAG_LLM_API_KEY` 后重启后端生效。若暂不使用真实模型，将 `SEMIDIAG_LLM_PROVIDER` 改为 `stub`。
+本地默认 LLM 配置使用 DeepSeek V4 Flash。复制 `.env.example` 为 `.env`，填写 `SEMIDIAG_LLM_API_KEY` 后重启后端生效。生产运行时不再提供 stub provider；自动化测试使用测试专用 fake provider，不依赖真实模型和密钥。
 
 测试：
 

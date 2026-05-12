@@ -7,6 +7,7 @@ from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
 from semidiag.tools import build_default_registry
+from tests.fakes import DeterministicLLMProvider
 
 CSV_CONTENT = b"""timestamp,chamber_temperature,pressure,throughput
 1,70,10,100
@@ -36,6 +37,7 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
 
     runtime = AgentRuntime(
         repository,
+        llm=DeterministicLLMProvider(),
         registry=build_default_registry(),
         plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"),
     )
@@ -71,7 +73,7 @@ def test_agent_generates_report_when_requested(tmp_path):
     )
     repository.add_dataset(dataset)
 
-    runtime = AgentRuntime(repository, plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"))
+    runtime = AgentRuntime(repository, llm=DeterministicLLMProvider(), plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"))
     runtime.handle_user_message(case_id=case.id, content="生成诊断报告", dataset_id=dataset.id)
 
     reports = [artifact for artifact in repository.list_case_artifacts(case.id) if artifact.kind == "report"]
@@ -96,6 +98,7 @@ def test_agent_selects_plugin_by_case_equipment_type(tmp_path):
     generated_root = tmp_path / "custom-generated"
     runtime = AgentRuntime(
         repository,
+        llm=DeterministicLLMProvider(),
         registry=build_default_registry(),
         plugin_registry=PluginRegistry([CustomEquipmentPlugin(generated_root=generated_root)]),
     )

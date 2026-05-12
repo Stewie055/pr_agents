@@ -41,8 +41,7 @@
 - Local file store。
 - Generic equipment diagnostic plugin。
 - CSV demo diagnostic service。
-- Stub LLM provider。
-- OpenAI-compatible LLM provider。
+- 生产运行时仅支持 OpenAI-compatible LLM provider；自动化测试使用测试专用 fake provider。
 - Native tools / prompt-xml-json LLM tool mode。
 - LLMProvider streaming and Agent SSE event stream。
 - LLM prompt/request/response audit。

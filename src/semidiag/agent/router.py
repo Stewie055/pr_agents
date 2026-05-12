@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
-from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
+from semidiag.agent.llm import LLMError, LLMProvider
 
 IntentName = Literal[
     "chat_response",
@@ -44,9 +44,6 @@ class LLMRouter:
         self.llm = llm
 
     def route(self, *, user_content: str, context: CaseRouteContext) -> RouteDecision:
-        if isinstance(self.llm, StubLLMProvider):
-            return self._stub_route(user_content=user_content, context=context)
-
         messages = [
             {
                 "role": "system",
@@ -116,20 +113,6 @@ class LLMRouter:
         if payload.get("response_style") not in {"brief", "normal", "detailed"}:
             payload["response_style"] = "normal"
         return payload
-
-    def _stub_route(self, *, user_content: str, context: CaseRouteContext) -> RouteDecision:
-        normalized = user_content.strip().lower()
-        if normalized in {"你好", "您好", "hi", "hello", "hey"}:
-            return RouteDecision(intent="chat_response", requires_dataset=False, user_goal="用户问候", response_style="brief")
-        if any(word in normalized for word in ["报告", "report"]):
-            return RouteDecision(intent="report_generation", requires_dataset=True, user_goal="生成诊断报告")
-        if any(word in normalized for word in ["资料", "手册", "原理", "是什么", "什么意思"]):
-            return RouteDecision(intent="knowledge_qa", requires_dataset=False, requires_knowledge=True, user_goal="资料问答")
-        if any(word in normalized for word in ["诊断", "异常", "建议", "故障"]):
-            return RouteDecision(intent="diagnosis", requires_dataset=True, user_goal="性能诊断")
-        if any(word in normalized for word in ["分析", "趋势", "画像", "比较"]):
-            return RouteDecision(intent="data_analysis", requires_dataset=True, user_goal="数据分析")
-        return RouteDecision(intent="clarification", requires_dataset=False, user_goal="需要澄清用户目标")
 
 
 class StateGateResult(BaseModel):

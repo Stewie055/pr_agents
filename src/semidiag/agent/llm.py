@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -23,85 +22,9 @@ __all__ = [
     "OpenAINativeToolProvider",
     "OpenAIPromptXmlJsonProvider",
     "PromptXmlJsonParser",
-    "StubLLMProvider",
     "build_llm_provider",
     "redact_llm_request",
 ]
-
-
-class StubLLMProvider:
-    """Deterministic provider used to validate orchestration without a real LLM."""
-
-    provider_name = "stub"
-    model = "deterministic-stub"
-    tool_mode = "stub"
-
-    def plan_tools(self, message: str, has_dataset: bool) -> list[str]:
-        normalized = message.lower()
-        if not has_dataset:
-            return []
-        if any(word in normalized for word in ["report", "报告"]):
-            return ["parse_dataset", "profile_dataset", "build_trend_chart", "diagnose_performance", "generate_report"]
-        if any(word in normalized for word in ["diagnose", "诊断", "异常", "建议", "analyze", "分析"]):
-            return ["parse_dataset", "profile_dataset", "build_trend_chart", "diagnose_performance"]
-        return ["parse_dataset", "profile_dataset"]
-
-    def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
-        user_message = next((item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), "")
-        normalized = user_message.lower()
-        has_dataset = "active dataset id:" in normalized or "active dataset available: true" in normalized
-        calls = [
-            LLMToolCall(id=f"stub_{index}", name=name, arguments={})
-            for index, name in enumerate(self.plan_tools(user_message, has_dataset), start=1)
-        ]
-        return LLMResult(content="", tool_calls=calls, metadata={"provider": self.provider_name, "model": self.model})
-
-    def plan_tool_calls_stream(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
-        yield LLMStreamChunk(event="result", result=self.plan_tool_calls(messages=messages, tools=tools))
-
-    def tool_specs(self, registry: Any) -> list[dict[str, Any]]:
-        return registry.openai_tools()
-
-    def summarize_turn(self, *, messages: list[dict[str, Any]]) -> LLMResult:
-        tool_messages = [item.get("content", "") for item in messages if item.get("role") == "tool"]
-        content = (
-            "已完成设备性能辅助诊断。请在证据链和报告草稿基础上进行工程师确认。\n"
-            + "\n".join(f"- {summary}" for summary in tool_messages)
-        )
-        return LLMResult(content=content, metadata={"provider": self.provider_name, "model": self.model})
-
-    def summarize_turn_stream(self, *, messages: list[dict[str, Any]]) -> Iterator[LLMStreamChunk]:
-        result = self.summarize_turn(messages=messages)
-        for part in self._split_stream_text(result.content):
-            yield LLMStreamChunk(event="delta", delta=part)
-        yield LLMStreamChunk(event="result", result=result)
-
-    def _split_stream_text(self, content: str) -> list[str]:
-        parts = re.split(r"(\n|。|；|！|？)", content)
-        chunks: list[str] = []
-        current = ""
-        for part in parts:
-            current += part
-            if part in {"\n", "。", "；", "！", "？"} and current:
-                chunks.append(current)
-                current = ""
-        if current:
-            chunks.append(current)
-        return chunks or [content]
-
-    def assistant_plan_message(self, result: LLMResult) -> dict[str, Any]:
-        return {"role": "assistant", "content": result.content or ""}
-
-    def tool_observation_messages(self, observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "role": "tool",
-                "tool_call_id": item["tool_call_id"],
-                "name": item["tool_name"],
-                "content": json.dumps(item["observation"], ensure_ascii=False),
-            }
-            for item in observations
-        ]
 
 
 @dataclass
@@ -575,4 +498,4 @@ def build_llm_provider(config: LLMConfig) -> LLMProvider:
         if config.tool_mode == "prompt_xml_json":
             return OpenAIPromptXmlJsonProvider(config)
         return OpenAINativeToolProvider(config)
-    return StubLLMProvider()
+    raise ValueError(f"Unsupported LLM provider: {config.provider}")

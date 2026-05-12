@@ -4,9 +4,16 @@ import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from semidiag.agent import AgentRuntime
-from semidiag.agent.llm import LLMError, OpenAINativeToolProvider, OpenAIPromptXmlJsonProvider, PromptXmlJsonParser
+from semidiag.agent.llm import (
+    LLMError,
+    OpenAINativeToolProvider,
+    OpenAIPromptXmlJsonProvider,
+    PromptXmlJsonParser,
+    build_llm_provider,
+)
 from semidiag.config import LLMConfig
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
@@ -32,6 +39,18 @@ def _runtime_with_provider(tmp_path, provider):
     )
     repository.add_dataset(dataset)
     return AgentRuntime(repository, llm=provider), repository, case, dataset
+
+
+def test_llm_config_rejects_removed_stub_provider():
+    with pytest.raises(ValidationError):
+        LLMConfig(provider="stub")  # type: ignore[arg-type]
+
+
+def test_build_llm_provider_defaults_to_openai_compatible():
+    provider = build_llm_provider(LLMConfig(base_url="http://llm.test/v1"))
+
+    assert isinstance(provider, OpenAINativeToolProvider)
+    assert provider.provider_name == "openai_compatible"
 
 
 def test_openai_compatible_tool_call_flow(tmp_path):

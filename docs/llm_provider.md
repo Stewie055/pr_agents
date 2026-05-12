@@ -4,7 +4,6 @@
 
 当前支持：
 
-- `stub`: 默认离线模式，不调用真实模型。
 - `openai_compatible`: 调用 OpenAI-compatible `/v1/chat/completions`。
 
 实现分层：
@@ -44,7 +43,7 @@ SEMIDIAG_LLM_MODEL=deepseek-v4-flash
 SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 ```
 
-不想连接真实模型时，将 `SEMIDIAG_LLM_PROVIDER` 改为 `stub`，系统会使用 deterministic stub。
+生产运行时不再提供离线 stub provider。本地开发需要配置 OpenAI-compatible LLM；自动化测试使用测试专用 fake provider。
 
 ## Tool Calling
 
@@ -97,7 +96,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 - `plan_tool_calls_stream`: 使用 `stream=true` 获取模型输出，native 模式会累积 tool-call delta 后返回完整 `LLMToolCall`。
 - `summarize_turn_stream`: 将文本 delta 作为 `message_delta` 上游事件实时输出。
 - `prompt_xml_json` 模式会先累积 XML 文本，完整解析 `<tool_calls>` 或 `<final_answer>` 后再执行工具，避免未校验协议片段进入工具链。
-- `stub` 模式提供伪流式输出，保证离线测试和前端体验一致。
+- 自动化测试的 fake provider 提供同步和伪流式输出，保证测试稳定，不进入生产运行时。
 
 工具规划阶段不会把未校验的内部 XML/JSON 协议文本展示给用户；最终回复阶段才流式展示用户可见文本。
 
@@ -110,17 +109,17 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 
 ## Failure Policy
 
-真实 LLM 已启用时：
+OpenAI-compatible LLM 运行时：
 
 - Router 返回非法 JSON 时返回 API 错误。
 - HTTP 4xx/5xx 返回 API 错误。
 - 超时返回 API 错误。
 - 非法 tool call 返回 API 错误。
-- 不自动降级到 stub。
+- 不自动降级到离线 provider。
 
 工具执行错误会作为 Observation 回传给 Agent，允许模型调整下一步；未知工具仍返回 API 错误。
 
-只有未配置真实 LLM 时才使用 stub。
+未配置真实 LLM 时，运行时请求会失败；测试场景应显式注入测试专用 fake provider。
 
 ## Audit
 
@@ -136,4 +135,4 @@ LLM prompt、request 和 response 会完整记录到 `llm_audit_events`。
 
 ## Testing
 
-自动化测试使用 `httpx.MockTransport` 模拟 OpenAI-compatible 服务，不依赖真实模型和密钥。
+自动化测试使用 `httpx.MockTransport` 模拟 OpenAI-compatible 服务，或注入 `tests/fakes.py` 中的测试专用 fake provider，不依赖真实模型和密钥。
