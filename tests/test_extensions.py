@@ -7,7 +7,7 @@ from semidiag.agent.llm import LLMResult, LLMToolCall
 from semidiag.api.main import AppState, create_app
 from semidiag.extensions import ExtensionLoader
 from semidiag.plugins import CalibrationPluginRegistry, ToolScopeBuilder
-from semidiag.tools import ToolRegistry, build_default_registry
+from semidiag.tools import ToolDefinition, ToolRegistry, ToolResult, build_default_registry
 
 
 def test_extension_loader_loads_business_tools(tmp_path):
@@ -83,14 +83,13 @@ def test_tool_scope_builder_exposes_only_common_and_selected_plugin_tools(tmp_pa
     )
     scoped_names = {tool.name for tool in scoped.list_tools()}
 
-    assert "parse_dataset" in scoped_names
+    assert "parse_dataset" not in scoped_names
     assert "lt_example_offline_analyze" not in scoped_names
 
     selected = ToolScopeBuilder(common_registry=build_default_registry(), calibration_registry=state.calibration_registry).build(
         selected_plugin_ids=["lt.example.offline_check"]
     )
     selected_names = {tool.name for tool in selected.list_tools()}
-    assert "parse_dataset" in selected_names
     assert "lt_example_offline_analyze" in selected_names
 
 
@@ -109,6 +108,78 @@ def test_api_lists_calibrations_and_extension_errors(tmp_path):
     assert any(item["status"] == "loaded" for item in extensions.json()["extensions"])
     assert tools.status_code == 200
     assert any(item["name"] == "lt_list_log_pool" for item in tools.json()["tools"])
+
+
+def test_tool_registry_rejects_duplicate_names():
+    registry = ToolRegistry()
+    definition = ToolDefinition(name="duplicate", description="first")
+    registry.register(definition, lambda context, arguments: ToolResult(summary="ok"))
+
+    try:
+        registry.register(definition, lambda context, arguments: ToolResult(summary="bad"))
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate tool registration should fail")
+
+
+def test_system_injected_arguments_are_hidden_from_llm_schema():
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="hidden_dataset",
+            description="hidden",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "dataset_id": {"type": "string"},
+                    "visible": {"type": "string"},
+                },
+                "required": ["dataset_id", "visible"],
+            },
+            system_injected_args=["dataset_id"],
+        ),
+        lambda context, arguments: ToolResult(summary="ok"),
+    )
+
+    schema = registry.openai_tools()[0]["function"]["parameters"]
+
+    assert "dataset_id" not in schema["properties"]
+    assert schema["required"] == ["visible"]
+
+
+def test_tool_scope_builder_validates_manifest_tool_names():
+    registry = CalibrationPluginRegistry()
+
+    def build_tools(context):
+        tools = ToolRegistry()
+        tools.register(
+            ToolDefinition(name="actual_tool", description="actual"),
+            lambda tool_context, arguments: ToolResult(summary="ok"),
+        )
+        return tools
+
+    from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+
+    registry.register(
+        CalibrationPlugin(
+            manifest=CalibrationPluginManifest(
+                plugin_id="bad.manifest",
+                display_name="Bad",
+                tool_names=["missing_tool"],
+            ),
+            build_tools=build_tools,
+        )
+    )
+
+    try:
+        ToolScopeBuilder(common_registry=ToolRegistry(), calibration_registry=registry).build(
+            selected_plugin_ids=["bad.manifest"]
+        )
+    except ValueError as exc:
+        assert "missing_tool" in str(exc)
+    else:
+        raise AssertionError("manifest/tool mismatch should fail")
 
 
 class ScopedToolProvider:

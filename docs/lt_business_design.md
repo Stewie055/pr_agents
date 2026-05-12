@@ -36,7 +36,7 @@ Plugin 可以提供自己的 Service 和算法，但 Agent 只通过 Tool 调用
 用户请求
   -> RouterAgent 判断意图
   -> PluginSelectorAgent 根据日志池和 plugin manifest 选择测校插件
-  -> ToolScopeBuilder 构造 common tools + selected plugin tools
+  -> ToolScopeBuilder 构造 selected plugin tools + common tools
   -> ExecutorAgent 执行 ReAct
 ```
 

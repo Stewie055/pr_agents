@@ -16,7 +16,6 @@ from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.plugins import (
     CalibrationPluginRegistry,
     CalibrationSelection,
-    GenericEquipmentPlugin,
     PluginRegistry,
     PluginSelectionContext,
     PluginSelectorAgent,
@@ -65,6 +64,7 @@ class AgentRuntime:
         llm: LLMProvider,
         registry: ToolRegistry | None = None,
         memory: MemoryService | None = None,
+        generated_root: str = "var/generated",
         plugin: DiagnosticPlugin | None = None,
         plugin_registry: PluginRegistry | None = None,
         calibration_registry: CalibrationPluginRegistry | None = None,
@@ -74,8 +74,8 @@ class AgentRuntime:
         self.registry = registry or build_default_registry()
         self.llm = llm
         self.memory = memory or MemoryService(repository)
-        self.plugin = plugin or GenericEquipmentPlugin()
-        self.plugin_registry = plugin_registry or PluginRegistry([self.plugin])
+        self.generated_root = generated_root
+        self.plugin_registry = plugin_registry or PluginRegistry([plugin] if plugin is not None else [])
         self.calibration_registry = calibration_registry or CalibrationPluginRegistry()
         self.plugin_selector = PluginSelectorAgent(self.llm, self.calibration_registry)
         self.metric_repository = metric_repository
@@ -242,7 +242,7 @@ class AgentRuntime:
                     final_content = self._repeated_tool_call_message()
                     break
 
-                arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
+                arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
                 try:
                     tool_result = tool_registry.run(call.name, context, arguments)
                     observation = self._tool_result_observation(call.name, tool_result)
@@ -334,7 +334,7 @@ class AgentRuntime:
                     final_content = self._repeated_tool_call_message()
                     break
 
-                arguments = self._prepare_tool_arguments(call.name, call.arguments, state.active_dataset_id)
+                arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
                 yield AgentStreamEvent(event="tool_start", data={"tool_name": call.name})
                 try:
                     tool_result = tool_registry.run(call.name, context, arguments)
@@ -415,15 +415,9 @@ class AgentRuntime:
             case_id=state.case_id,
             actor=state.actor,
             repository=self.repository,
-            plugin=self._resolve_plugin(state.case_id),
             metric_repository=self.metric_repository,
+            generated_root=str(self.generated_root),
         )
-
-    def _resolve_plugin(self, case_id: str) -> DiagnosticPlugin:
-        case = self.repository.get_case(case_id)
-        if case is None:
-            raise KeyError(case_id)
-        return self.plugin_registry.require(case.equipment_type)
 
     def _select_calibration_plugins(self, *, case_id: str, content: str) -> CalibrationSelection:
         datasets = self.repository.list_case_datasets(case_id)
@@ -501,9 +495,16 @@ class AgentRuntime:
             },
         )
 
-    def _prepare_tool_arguments(self, tool_name: str, arguments: dict[str, Any], active_dataset_id: str | None) -> dict[str, Any]:
+    def _prepare_tool_arguments(
+        self,
+        tool_registry: ToolRegistry,
+        tool_name: str,
+        arguments: dict[str, Any],
+        active_dataset_id: str | None,
+    ) -> dict[str, Any]:
         prepared = dict(arguments)
-        if tool_name in {"parse_dataset", "inspect_dataset", "profile_dataset", "build_trend_chart"}:
+        definition = tool_registry.get_tool(tool_name)
+        if definition is not None and "dataset_id" in definition.system_injected_args:
             prepared["dataset_id"] = active_dataset_id
         return prepared
 

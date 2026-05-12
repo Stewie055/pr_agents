@@ -6,6 +6,13 @@ from collections.abc import Iterator
 from typing import Any
 
 from semidiag.agent.llm import LLMResult, LLMStreamChunk, LLMToolCall
+from semidiag.tools import ToolRegistry
+
+
+def build_demo_csv_tool_registry() -> ToolRegistry:
+    from business.plugins.demo_csv_analysis import build_tools
+
+    return build_tools(None)
 
 
 class DeterministicLLMProvider:
@@ -24,8 +31,16 @@ class DeterministicLLMProvider:
         if "路由器" in first_content:
             return LLMResult(content=json.dumps(self._route(messages), ensure_ascii=False), metadata=self._metadata())
         if "插件选择器" in first_content:
+            user_payload = messages[-1].get("content", "") if messages else ""
+            user_line = next((line for line in user_payload.splitlines() if line.startswith("User content:")), "")
+            if "lt.example.offline_check" in user_payload and "offline" in user_line.lower():
+                plugin_ids = ["lt.example.offline_check"]
+            elif "demo.csv_diagnostics" in user_payload:
+                plugin_ids = ["demo.csv_diagnostics"]
+            else:
+                plugin_ids = []
             return LLMResult(
-                content=json.dumps({"plugin_ids": ["lt.example.offline_check"], "reason": "Matched by test fake.", "confidence": 0.9}),
+                content=json.dumps({"plugin_ids": plugin_ids, "reason": "Matched by test fake.", "confidence": 0.9}),
                 metadata=self._metadata(),
             )
         content = "你好。请上传设备性能数据文件，上传后我可以开始分析。" if self._is_greeting(messages) else self._final_answer(messages)

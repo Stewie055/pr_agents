@@ -42,7 +42,7 @@ WebUI
   -> Infrastructure
 ```
 
-长期设计以设备类型诊断插件扩展业务能力。Agent 只负责编排和总结，不直接承载业务算法；真实解析、清洗、统计、建模、报告能力应沉到 Service 层。
+长期设计以业务扩展包提供诊断能力。Agent 只负责编排和总结，不直接承载业务算法；真实解析、清洗、统计、建模、绘图、报告能力应沉到 `business/services`，再由 `business/plugins` 或 `business/tools` 暴露为 Agent 可调用工具。
 
 ## Setup
 

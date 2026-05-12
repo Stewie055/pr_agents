@@ -68,15 +68,14 @@ bash scripts/check.sh
 
 ## Adding A Diagnostic Package
 
-1. 新建插件类并继承 `DiagnosticPlugin`。
-2. 提供设备类型、展示名称和业务 Service。
-3. 将插件注册到 `PluginRegistry`，Runtime 会按案例 `equipment_type` 选择插件。
-4. 在 Service 中实现解析、指标画像、诊断和报告。
-5. 解析流程应通过 `extract_metric_points` 或等价接口输出结构化指标，Tool 负责写入 `MetricRepository`。
-6. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
-7. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
-8. 将需要暴露给 Agent 的能力注册为 Tool。
-9. 为 Service、Tool、API 和前端展示补充测试。
+1. 在 `business/services/` 中实现解析、清洗、指标画像、诊断、绘图和报告生成。
+2. 在 `business/plugins/` 中注册测校项或分析插件，manifest 声明场景、日志类型、型号、描述和 tool names。
+3. 在插件 `build_tools(context)` 中构造 ToolRegistry，把 Service 能力暴露为 plugin tools。
+4. 解析流程应输出结构化指标，Tool 负责写入 `MetricRepository`。
+5. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
+6. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
+7. 需要始终可用的公共能力放入 `business/tools/`。
+8. 为 Service、Tool、API 和前端展示补充测试。
 
 ## Business Extensions
 
@@ -84,6 +83,7 @@ bash scripts/check.sh
 
 - `business/tools/*.py`: 公共业务工具，文件必须提供 `register(registry)`。
 - `business/plugins/*.py`: LT 测校项插件，文件必须提供 `register(registry)`。
+- `business/services/*.py`: 保密业务实现或非保密示例 Service，由 Tool/Plugin 调用，不直接被 Agent 调用。
 
 服务启动时加载扩展。加载状态可通过 `GET /api/extensions` 查看，测校插件 manifest 可通过 `GET /api/calibrations` 查看。
 

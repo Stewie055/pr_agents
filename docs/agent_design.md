@@ -24,7 +24,7 @@ Agent 是辅助诊断编排者，不是最终诊断责任主体。它负责：
 1. LLM Router/Triage 先输出结构化 `RouteDecision`。
 2. State Gate 检查当前状态是否满足该路径，例如分析/诊断/报告是否已有数据集。
 3. PluginSelectorAgent 基于用户请求、案例日志池和测校插件 manifest 选择 0-3 个 LT 测校插件。
-4. ToolScopeBuilder 构造 common tools + selected plugin tools。
+4. ToolScopeBuilder 构造 selected plugin tools + common tools，并优先保留被选中的业务工具。
 5. 需要工具时进入 ReAct loop，让模型通过 native tool calls 或 XML+JSON 文本协议返回 tool calls。
 6. 执行白名单工具，将结构化 Observation 回填给模型。
 7. 模型可以继续调用工具或输出 final answer，直到 final、重复调用保护或 `max_steps`。

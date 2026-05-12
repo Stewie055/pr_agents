@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 from semidiag.agent import AgentRuntime
 from semidiag.api.main import AppState, create_app
 from semidiag.domain import AgentStepTrace, LLMAuditEvent
-from semidiag.tools import build_default_registry
 from tests.fakes import DeterministicLLMProvider
 
 CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
@@ -38,9 +37,11 @@ def test_api_case_upload_and_agent_message(tmp_path):
     state = AppState(tmp_path)
     state.agent = AgentRuntime(
         state.repository,
-        registry=build_default_registry(),
+        registry=state.tool_registry,
         llm=DeterministicLLMProvider(),
-        plugin=state.plugin,
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
     )
     app = create_app(state)
@@ -81,6 +82,7 @@ def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
         state.repository,
         registry=state.tool_registry,
         llm=DeterministicLLMProvider(),
+        generated_root=str(state.generated_root),
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
@@ -107,7 +109,14 @@ def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
 
 def test_api_streams_agent_events(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=state.tool_registry,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
+    )
     app = create_app(state)
     client = TestClient(app)
     created = client.post("/api/cases", json={"title": "Streaming"}).json()
@@ -142,12 +151,27 @@ def test_api_streams_agent_events(tmp_path):
 
 def test_api_lists_tool_contracts(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=state.tool_registry,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
+    )
     app = create_app(state)
     client = TestClient(app)
 
-    response = client.get("/api/tools")
+    case = client.post("/api/cases", json={"title": "Tool scope"}).json()
+    client.post(
+        f"/api/cases/{case['id']}/files",
+        files={"file": ("performance.csv", CSV_CONTENT, "text/csv")},
+    )
+    default_response = client.get("/api/tools")
+    response = client.get(f"/api/tools?case_id={case['id']}&content=请诊断")
 
+    assert default_response.status_code == 200
+    assert "parse_dataset" not in {tool["name"] for tool in default_response.json()["tools"]}
     assert response.status_code == 200
     names = {tool["name"] for tool in response.json()["tools"]}
     assert {"parse_dataset", "profile_dataset", "diagnose_performance", "generate_report"} <= names
@@ -167,7 +191,14 @@ def test_api_lists_diagnostic_plugins(tmp_path):
 
 def test_api_generates_downloadable_ppt_report(tmp_path):
     state = AppState(tmp_path)
-    state.agent = AgentRuntime(state.repository, registry=build_default_registry(), llm=DeterministicLLMProvider(), plugin=state.plugin)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=state.tool_registry,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
+    )
     app = create_app(state)
     client = TestClient(app)
     case = client.post("/api/cases", json={"title": "Report deck"}).json()
@@ -200,9 +231,11 @@ def test_api_creates_and_runs_workflow_from_case(tmp_path):
     state = AppState(tmp_path)
     state.agent = AgentRuntime(
         state.repository,
-        registry=build_default_registry(),
+        registry=state.tool_registry,
         llm=DeterministicLLMProvider(),
-        plugin=state.plugin,
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
     )
     app = create_app(state)

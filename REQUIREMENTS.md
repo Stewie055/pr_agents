@@ -39,8 +39,8 @@
 - Vue/Vite 前端。
 - SQLite repository。
 - Local file store。
-- Generic equipment diagnostic plugin。
-- CSV demo diagnostic service。
+- Generic/LT equipment metadata plugin。
+- Demo CSV diagnostic service under `business/services` and plugin-scoped demo tools under `business/plugins`。
 - 生产运行时仅支持 OpenAI-compatible LLM provider；自动化测试使用测试专用 fake provider。
 - Native tools / prompt-xml-json LLM tool mode。
 - LLMProvider streaming and Agent SSE event stream。
@@ -62,7 +62,7 @@
 - Midterm memory persisted in SQLite and loaded into LLM case context.
 - Local knowledge records with keyword retrieval for knowledge_qa context, keeping vector RAG replaceable later.
 - Workflow template foundation with case trace capture and manual replay API.
-- Business extension loader for `business/tools/*.py` and `business/plugins/*.py` using `register(registry)`.
+- Business extension loader for `business/tools/*.py` and `business/plugins/*.py` using `register(registry)`; business services live under `business/services`.
 - LT calibration plugin manifests and plugin-scoped tool exposure to avoid tool explosion.
 - LT log pool metadata detected from filename rules for LT-D, LT-C, and LT-R.
 

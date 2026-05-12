@@ -2,9 +2,9 @@
 
 ## Service Contract
 
-Service 层不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返回结构化结果。
+Service 层放在 `business/services/`，不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返回结构化结果。
 
-当前示例 `CSVDiagnosticService` 提供：
+当前非保密示例 `business/services/demo_csv_diagnostics.py` 提供：
 
 - `parse_dataset`
 - `profile_dataset`
@@ -13,7 +13,7 @@ Service 层不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返�
 - `generate_report`
 
 真实业务迁移时，应优先把 Qt 程序里的解析、清洗、建模、绘图和报告逻辑抽成 Service。图表应由 Service 使用 Matplotlib 或业务绘图库生成 PNG/SVG/PDF 等文件，再通过 Artifact 暴露给 Agent 和 WebUI；Agent 不直接绘图。
-Runtime 通过 `PluginRegistry` 按案例 `equipment_type` 选择 Service 所在插件，因此真实业务迁移应新增插件并注册，不应让 Agent 直接判断业务类型。
+Service 由 `business/plugins/*.py` 或 `business/tools/*.py` 调用。平台核心只关心 ToolDefinition、ToolResult、Artifact、Evidence 和 Observation。
 解析类 Tool 会把 Service 提取出的结构化指标写入 `MetricRepository`；当前默认 SQLite 实现，生产目标是 ClickHouse adapter。
 长耗时 Service 调用后续应由任务队列承载，Tool/API 负责创建任务和暴露状态，不让请求线程长期阻塞。
 Workflow 重放复用 Tool Registry 执行步骤，因此 Tool 必须保持幂等或能安全重复生成新 Artifact/Trace。
@@ -28,6 +28,10 @@ Workflow 重放复用 Tool Registry 执行步骤，因此 Tool 必须保持幂�
 - `output_schema`
 - `required_permissions`
 - `risk_level`
+- `origin`
+- `phase`
+- `capability_tags`
+- `system_injected_args`
 
 Tool 执行必须：
 
@@ -41,8 +45,10 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 
 业务 Tool 可以来自两类来源：
 
-- Common Tool：平台级通用能力，启动时进入 common registry。
+- Common Tool：公共业务能力，来自 `business/tools/*.py`，启动时进入 common registry。
 - Plugin Tool：测校项插件提供的工具，只有插件被选中后才进入本轮 active registry。
+
+`dataset_id` 这类系统参数应放入 `system_injected_args`。Runtime 会自动注入，LLM 可见 schema 会隐藏这些字段，用户也不需要手动提供内部 ID。
 
 ## Tool Observation
 

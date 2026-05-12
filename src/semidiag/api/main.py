@@ -19,7 +19,7 @@ from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.infrastructure.tasks import InProcessTaskQueue
 from semidiag.lt import detect_lt_log_metadata
-from semidiag.plugins import CalibrationPluginRegistry, GenericEquipmentPlugin, LTEquipmentPlugin, PluginRegistry
+from semidiag.plugins import CalibrationPluginRegistry, CalibrationSelection, GenericEquipmentPlugin, LTEquipmentPlugin, PluginRegistry
 from semidiag.tools import ToolContext, build_default_registry
 
 
@@ -53,8 +53,8 @@ class AppState:
         self.file_store = LocalFileStore(root_path / "files")
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
-        self.plugin = GenericEquipmentPlugin(generated_root=self.generated_root)
-        self.lt_plugin = LTEquipmentPlugin(generated_root=self.generated_root)
+        self.plugin = GenericEquipmentPlugin()
+        self.lt_plugin = LTEquipmentPlugin()
         self.plugin_registry = PluginRegistry([self.plugin, self.lt_plugin])
         self.calibration_registry = CalibrationPluginRegistry()
         self.extension_loader = ExtensionLoader(os.getenv("SEMIDIAG_EXTENSION_DIR", "business"))
@@ -65,6 +65,7 @@ class AppState:
             self.repository,
             registry=self.tool_registry,
             llm=llm_provider,
+            generated_root=str(self.generated_root),
             plugin_registry=self.plugin_registry,
             calibration_registry=self.calibration_registry,
             metric_repository=self.metric_repository,
@@ -240,8 +241,19 @@ def create_app(state: AppState | None = None) -> FastAPI:
             case_id=case_id,
             actor="workflow",
             repository=current.repository,
-            plugin=current.plugin_registry.require(case.equipment_type),
             metric_repository=current.metric_repository,
+            generated_root=str(current.generated_root),
+        )
+        workflow_tool_names = {step.get("tool_name") for step in workflow.steps if isinstance(step.get("tool_name"), str)}
+        selected_plugin_ids = [
+            manifest.plugin_id
+            for manifest in current.calibration_registry.list_manifests()
+            if workflow_tool_names.intersection(manifest.tool_names)
+        ]
+        replay_registry = current.agent._build_active_tool_registry(
+            case_id=case_id,
+            actor="workflow",
+            selection=CalibrationSelection(plugin_ids=selected_plugin_ids, reason="Workflow replay tool scope."),
         )
         results = []
         for step in workflow.steps:
@@ -249,11 +261,12 @@ def create_app(state: AppState | None = None) -> FastAPI:
             if not isinstance(tool_name, str):
                 continue
             arguments = dict(step.get("arguments") or {})
-            if tool_name in {"parse_dataset", "inspect_dataset", "profile_dataset", "build_trend_chart"}:
+            definition = replay_registry.get_tool(tool_name)
+            if definition is not None and "dataset_id" in definition.system_injected_args:
                 if active_dataset_id is None:
                     raise HTTPException(status_code=409, detail="workflow requires a dataset")
                 arguments["dataset_id"] = active_dataset_id
-            tool_result = current.agent.registry.run(tool_name, context, arguments)
+            tool_result = replay_registry.run(tool_name, context, arguments)
             results.append({"tool_name": tool_name, "summary": tool_result.summary})
         return {"workflow": workflow, "results": results}
 

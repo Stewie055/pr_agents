@@ -65,14 +65,25 @@ class ToolScopeBuilder:
 
     def build(self, *, selected_plugin_ids: list[str], context: ToolContext | None = None) -> ToolRegistry:
         active = ToolRegistry()
-        active.extend(self.common_registry)
         for plugin_id in selected_plugin_ids:
             plugin = self.calibration_registry.get(plugin_id)
             if plugin is None:
                 continue
-            active.extend(plugin.build_tools(context))
+            plugin_tools = plugin.build_tools(context)
+            manifest_names = set(plugin.manifest.tool_names)
+            actual_names = {definition.name for definition in plugin_tools.list_tools()}
+            missing = manifest_names - actual_names
+            if missing:
+                raise ValueError(f"Plugin {plugin_id} manifest declares missing tool(s): {', '.join(sorted(missing))}")
+            active.extend(plugin_tools)
             if len(active.list_tools()) >= self.max_tools:
                 break
+        for definition in self.common_registry.list_tools():
+            if len(active.list_tools()) >= self.max_tools:
+                break
+            handler = self.common_registry.get_handler(definition.name)
+            if handler is not None and active.get_tool(definition.name) is None:
+                active.register(definition, handler)
         if len(active.list_tools()) <= self.max_tools:
             return active
         allowed = {definition.name for definition in active.list_tools()[: self.max_tools]}

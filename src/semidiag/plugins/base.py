@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-
-from semidiag.services.csv_diagnostics import CSVDiagnosticService
+from dataclasses import dataclass
 
 
-class DiagnosticPlugin(ABC):
+@dataclass
+class DiagnosticPlugin:
     equipment_type: str
     display_name: str
-
-    @abstractmethod
-    def diagnostic_service(self) -> CSVDiagnosticService:
-        raise NotImplementedError

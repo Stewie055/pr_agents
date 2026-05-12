@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from semidiag.agent import AgentRuntime
+from semidiag.extensions import ExtensionLoader
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
+from semidiag.plugins import CalibrationPluginRegistry, GenericEquipmentPlugin, PluginRegistry
 from semidiag.tools import build_default_registry
 from tests.fakes import DeterministicLLMProvider
 
@@ -19,8 +20,16 @@ CSV_CONTENT = b"""timestamp,chamber_temperature,pressure,throughput
 
 
 class CustomEquipmentPlugin(GenericEquipmentPlugin):
-    equipment_type = "custom_semiconductor_tool"
-    display_name = "Custom semiconductor equipment"
+    def __init__(self) -> None:
+        super().__init__()
+        self.equipment_type = "custom_semiconductor_tool"
+        self.display_name = "Custom semiconductor equipment"
+
+
+def load_demo_calibrations() -> CalibrationPluginRegistry:
+    registry = CalibrationPluginRegistry()
+    ExtensionLoader("business").load_plugins(registry)
+    return registry
 
 
 def test_agent_runs_diagnostic_tool_loop(tmp_path):
@@ -39,7 +48,9 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
         repository,
         llm=DeterministicLLMProvider(),
         registry=build_default_registry(),
-        plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"),
+        generated_root=str(tmp_path / "generated"),
+        plugin=GenericEquipmentPlugin(),
+        calibration_registry=load_demo_calibrations(),
     )
     result = runtime.handle_user_message(
         case_id=case.id,
@@ -73,7 +84,13 @@ def test_agent_generates_report_when_requested(tmp_path):
     )
     repository.add_dataset(dataset)
 
-    runtime = AgentRuntime(repository, llm=DeterministicLLMProvider(), plugin=GenericEquipmentPlugin(generated_root=tmp_path / "generated"))
+    runtime = AgentRuntime(
+        repository,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(tmp_path / "generated"),
+        plugin=GenericEquipmentPlugin(),
+        calibration_registry=load_demo_calibrations(),
+    )
     runtime.handle_user_message(case_id=case.id, content="生成诊断报告", dataset_id=dataset.id)
 
     reports = [artifact for artifact in repository.list_case_artifacts(case.id) if artifact.kind == "report"]
@@ -100,7 +117,9 @@ def test_agent_selects_plugin_by_case_equipment_type(tmp_path):
         repository,
         llm=DeterministicLLMProvider(),
         registry=build_default_registry(),
-        plugin_registry=PluginRegistry([CustomEquipmentPlugin(generated_root=generated_root)]),
+        generated_root=str(generated_root),
+        plugin_registry=PluginRegistry([CustomEquipmentPlugin()]),
+        calibration_registry=load_demo_calibrations(),
     )
 
     result = runtime.handle_user_message(case_id=case.id, content="请分析趋势", dataset_id=dataset.id)
