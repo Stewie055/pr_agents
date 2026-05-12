@@ -55,6 +55,7 @@
 - Agent runtime and Tool Registry。
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.
+- Product maturity plans under `plans/`.
 
 ## Non-Goals For Current Slice
 
