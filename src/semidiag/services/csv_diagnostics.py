@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import math
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
@@ -16,7 +16,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 
 from semidiag.domain import AnalysisArtifact, DiagnosisConclusion, Evidence
-from semidiag.vendor.ppt_template_sdk import ImageContent, PptTemplateEngine, RendererRegistry, RenderContext, TextContent
+from semidiag.vendor.ppt_template_sdk import ImageContent, PptTemplateEngine, RenderContext, RendererRegistry, TextContent
 
 
 class CSVDiagnosticService:
@@ -259,7 +259,7 @@ class CSVDiagnosticService:
             for item in artifacts
             if item.kind == "chart" and isinstance(item.data.get("file_path"), str) and Path(str(item.data["file_path"])).exists()
         ]
-        report_path = report_dir / f"diagnostic_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pptx"
+        report_path = report_dir / f"diagnostic_report_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.pptx"
         renderer = self._render_ppt_report(
             output_path=report_path,
             case_id=case_id,

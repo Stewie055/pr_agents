@@ -11,7 +11,6 @@ from semidiag.config import LLMConfig
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
 
-
 CSV_CONTENT = b"""timestamp,chamber_temperature,pressure,throughput
 1,70,10,100
 2,71,11,101
@@ -454,7 +453,10 @@ def test_react_loop_returns_tool_errors_as_observations(tmp_path):
 
     assert result.message.content == "需要先完成指标画像。"
     steps = repository.list_case_agent_step_traces(case.id)
-    assert any("profile_dataset must run before diagnose_performance" in json.dumps(step.observations, ensure_ascii=False) for step in steps)
+    assert any(
+        "profile_dataset must run before diagnose_performance" in json.dumps(step.observations, ensure_ascii=False)
+        for step in steps
+    )
 
 
 def test_openai_compatible_invalid_tool_arguments_raise_error():
@@ -514,13 +516,40 @@ def test_openai_compatible_streams_native_tool_call_arguments():
         body = json.loads(request.content.decode())
         assert body["stream"] is True
         assert "tools" in body
-        content = "\n\n".join(
-            [
-                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"inspect_dataset","arguments":"{\\"dataset_id\\":"}}]},"finish_reason":null}]}',
-                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"placeholder\\"}"}}]},"finish_reason":"tool_calls"}]}',
-                "data: [DONE]",
-            ]
-        )
+        chunks = [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "inspect_dataset", "arguments": '{"dataset_id":'},
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": '"placeholder"}'},
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+        ]
+        content = "\n\n".join([*(f"data: {json.dumps(chunk)}" for chunk in chunks), "data: [DONE]"])
         return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
 
     provider = OpenAINativeToolProvider(LLMConfig(provider="openai_compatible", base_url="http://llm.test/v1"))

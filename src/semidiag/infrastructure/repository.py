@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 

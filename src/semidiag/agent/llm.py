@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Iterator, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, Field

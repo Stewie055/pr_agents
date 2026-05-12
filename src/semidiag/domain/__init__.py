@@ -6,11 +6,11 @@ from semidiag.domain.models import (
     AnalysisArtifact,
     AuditEvent,
     DatasetRecord,
-    DiagnosticCase,
     DiagnosisConclusion,
+    DiagnosticCase,
     Evidence,
-    ToolCallTrace,
     LLMAuditEvent,
+    ToolCallTrace,
 )
 
 __all__ = [

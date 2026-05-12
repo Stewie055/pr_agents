@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from semidiag.agent import AgentRuntime
-from semidiag.agent.llm import LLMError, LLMResult
+from semidiag.agent.llm import LLMError
 from semidiag.api.main import AppState, create_app
 from semidiag.tools import build_default_registry
 

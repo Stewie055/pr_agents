@@ -8,7 +8,6 @@ from semidiag.api.main import AppState, create_app
 from semidiag.domain import AgentStepTrace, LLMAuditEvent
 from semidiag.tools import build_default_registry
 
-
 CSV_CONTENT = """timestamp,chamber_temperature,pressure,throughput
 1,70,10,100
 2,71,11,101

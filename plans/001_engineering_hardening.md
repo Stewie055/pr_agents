@@ -10,6 +10,7 @@
 - 拆分 Agent Runtime：同步和流式 ReAct 共享工具执行、Observation、停止条件和最终消息持久化逻辑。
 - 增加工程质量命令：后端测试、前端测试、前端构建、静态检查入口。
 - 增加 CI，覆盖后端 pytest、前端 Vitest 和前端 build。
+- 当前质量门禁入口为 `bash scripts/check.sh`，CI 位于 `.github/workflows/ci.yml`。
 - 文档明确质量门禁和本地验证命令。
 
 ## Acceptance

@@ -113,6 +113,12 @@ npm test
 npm run build
 ```
 
+Full local quality gate:
+
+```bash
+bash scripts/check.sh
+```
+
 ## Demo Flow
 
 1. 在 WebUI 创建诊断案例。

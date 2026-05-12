@@ -5,10 +5,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from semidiag.agent.llm import LLMError, LLMProvider, StubLLMProvider
-
 
 IntentName = Literal[
     "chat_response",

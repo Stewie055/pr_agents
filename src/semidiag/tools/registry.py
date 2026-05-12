@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from semidiag.domain import AnalysisArtifact, AuditEvent, Evidence, ToolCallTrace
 from semidiag.infrastructure.repository import SQLiteRepository
-from semidiag.plugins import DiagnosticPlugin, GenericEquipmentPlugin
+from semidiag.plugins import DiagnosticPlugin
 
 
 class ToolDefinition(BaseModel):

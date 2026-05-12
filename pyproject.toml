@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2,<9",
+  "ruff>=0.8,<1",
 ]
 
 [project.scripts]
@@ -29,6 +30,17 @@ semidiag-api = "semidiag.api.main:run"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+exclude = [
+  "src/semidiag/vendor",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E402"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

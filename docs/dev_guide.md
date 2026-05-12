@@ -32,6 +32,7 @@ semidiag-api
 
 ```bash
 python -m pytest
+ruff check src tests
 ```
 
 ## Frontend
@@ -54,8 +55,15 @@ npm run dev
 测试和构建：
 
 ```bash
+npm run typecheck
 npm test
 npm run build
+```
+
+完整本地质量门禁：
+
+```bash
+bash scripts/check.sh
 ```
 
 ## Adding A Diagnostic Package

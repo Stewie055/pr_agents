@@ -56,6 +56,7 @@
 - Artifact/Evidence/DiagnosisConclusion 数据模型。
 - Backend and frontend tests.
 - Product maturity plans under `plans/`.
+- CI quality gate covering backend lint/tests and frontend typecheck/tests/build.
 
 ## Non-Goals For Current Slice
 
