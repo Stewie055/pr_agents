@@ -8,7 +8,7 @@
 
 - 使用进程内任务队列实现解析、绘图、PPT、批处理等长任务的状态管理。当前 `InProcessTaskQueue` 基础设施已完成。
 - 增加任务状态 API：pending、running、succeeded、failed、cancelled。当前 `GET /api/tasks` 和 `GET /api/tasks/{task_id}` 已完成。
-- Workflow 首版支持从一次诊断沉淀为步骤模板，并手动触发重放。
+- Workflow 首版支持从一次诊断沉淀为步骤模板，并手动触发重放。当前 Tool trace 到 `WorkflowTemplate` 以及手动重放 API 已完成。
 - 中期记忆持久化到 SQLite。当前 `MemoryRecord` 和 `MemoryService(repository)` 已完成。
 - 长期知识库提供抽象接口，默认本地实现支持文档摘要检索和来源引用。当前 SQLite 本地知识记录和关键词检索 API 已完成。
 - knowledge_qa 路径从通用回答升级为检索增强回答。当前会把知识命中摘要放入非工具 LLM 上下文。

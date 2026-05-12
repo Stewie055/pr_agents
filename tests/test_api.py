@@ -170,6 +170,43 @@ def test_api_generates_downloadable_ppt_report(tmp_path):
     assert ppt.content.startswith(b"PK")
 
 
+def test_api_creates_and_runs_workflow_from_case(tmp_path):
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=build_default_registry(),
+        llm=StubLLMProvider(),
+        plugin=state.plugin,
+        metric_repository=state.metric_repository,
+    )
+    app = create_app(state)
+    client = TestClient(app)
+    case = client.post("/api/cases", json={"title": "Workflow case"}).json()
+    upload = client.post(
+        f"/api/cases/{case['id']}/files",
+        files={"file": ("performance.csv", CSV_CONTENT, "text/csv")},
+    )
+    dataset_id = upload.json()["id"]
+    response = client.post(
+        f"/api/cases/{case['id']}/messages",
+        json={"content": "请分析并诊断", "dataset_id": dataset_id},
+    )
+    assert response.status_code == 200
+
+    created = client.post(
+        f"/api/cases/{case['id']}/workflows",
+        json={"name": "Replay diagnostic", "description": "Replay the successful tool sequence."},
+    )
+    workflows = client.get("/api/workflows")
+    replay = client.post(f"/api/cases/{case['id']}/workflows/{created.json()['id']}/run")
+
+    assert created.status_code == 200
+    assert workflows.status_code == 200
+    assert workflows.json()["workflows"][0]["name"] == "Replay diagnostic"
+    assert replay.status_code == 200
+    assert any(item["tool_name"] == "diagnose_performance" for item in replay.json()["results"])
+
+
 def test_trace_api_returns_debug_data_with_redaction(tmp_path):
     state = AppState(tmp_path)
     app = create_app(state)

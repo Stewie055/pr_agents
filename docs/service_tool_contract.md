@@ -16,6 +16,7 @@ Service 层不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返�
 Runtime 通过 `PluginRegistry` 按案例 `equipment_type` 选择 Service 所在插件，因此真实业务迁移应新增插件并注册，不应让 Agent 直接判断业务类型。
 解析类 Tool 会把 Service 提取出的结构化指标写入 `MetricRepository`；当前默认 SQLite 实现，生产目标是 ClickHouse adapter。
 长耗时 Service 调用后续应由任务队列承载，Tool/API 负责创建任务和暴露状态，不让请求线程长期阻塞。
+Workflow 重放复用 Tool Registry 执行步骤，因此 Tool 必须保持幂等或能安全重复生成新 Artifact/Trace。
 
 ## Tool Contract
 

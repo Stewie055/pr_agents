@@ -150,3 +150,13 @@ LLM 公共 contract、prompt XML+JSON parser 和审计脱敏已拆到独立模�
 - 处置建议确认。
 
 当前 Tool Registry 已包含 `risk_level` 字段和高风险工具拦截逻辑。
+
+## Workflow
+
+当前 Workflow 首版支持：
+
+- 从一个案例已成功执行的 Tool traces 创建 `WorkflowTemplate`。
+- 查询 Workflow 模板列表。
+- 在案例上手动重放模板步骤，数据集类工具自动使用当前案例最新数据集。
+
+Workflow 发布、权限审批、批处理和定时执行后续接入任务队列与外部权限系统。

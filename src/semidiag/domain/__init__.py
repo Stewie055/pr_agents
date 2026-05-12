@@ -13,6 +13,7 @@ from semidiag.domain.models import (
     LLMAuditEvent,
     MemoryRecord,
     ToolCallTrace,
+    WorkflowTemplate,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "LLMAuditEvent",
     "MemoryRecord",
     "ToolCallTrace",
+    "WorkflowTemplate",
 ]

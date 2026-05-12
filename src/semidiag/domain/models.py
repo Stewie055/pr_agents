@@ -69,6 +69,15 @@ class KnowledgeRecord(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class WorkflowTemplate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("wf"))
+    name: str
+    description: str = ""
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    source_case_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ev"))
     case_id: str

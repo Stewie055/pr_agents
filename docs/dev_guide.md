@@ -103,3 +103,13 @@ bash scripts/check.sh
 - `GET /api/knowledge?q=<keyword>`
 
 当前实现是 SQLite 关键词检索，用于打通知识问答上下文；后续向量库/RAG adapter 应保持来源摘要语义。
+
+## Workflow
+
+Workflow API：
+
+- `POST /api/cases/{case_id}/workflows`
+- `GET /api/workflows`
+- `POST /api/cases/{case_id}/workflows/{workflow_id}/run`
+
+当前版本从成功的 Tool traces 生成模板，并支持在案例上手动重放。数据集类工具重放时自动使用当前案例最新数据集。

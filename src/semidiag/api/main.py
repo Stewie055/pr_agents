@@ -12,13 +12,13 @@ from pydantic import BaseModel
 from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
-from semidiag.domain import KnowledgeRecord
+from semidiag.domain import KnowledgeRecord, WorkflowTemplate
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.infrastructure.tasks import InProcessTaskQueue
 from semidiag.plugins import GenericEquipmentPlugin, PluginRegistry
-from semidiag.tools import build_default_registry
+from semidiag.tools import ToolContext, build_default_registry
 
 
 class CreateCaseRequest(BaseModel):
@@ -35,6 +35,11 @@ class CreateKnowledgeRequest(BaseModel):
     title: str
     content: str
     source: str = "local"
+
+
+class CreateWorkflowRequest(BaseModel):
+    name: str
+    description: str = ""
 
 
 class AppState:
@@ -175,6 +180,61 @@ def create_app(state: AppState | None = None) -> FastAPI:
     def list_knowledge(q: str | None = None, current=Depends(get_state)):
         items = current.repository.search_knowledge(q) if q else current.repository.list_knowledge()
         return {"knowledge": [item.model_dump(mode="json") for item in items]}
+
+    @app.post("/api/cases/{case_id}/workflows")
+    def create_workflow_from_case(case_id: str, request: CreateWorkflowRequest, current=Depends(get_state)):
+        if current.repository.get_case(case_id) is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        traces = [
+            trace
+            for trace in current.repository.list_case_tool_traces(case_id)
+            if trace.status == "success"
+        ]
+        steps = [{"tool_name": trace.tool_name, "arguments": trace.arguments} for trace in traces]
+        workflow = current.repository.add_workflow(
+            WorkflowTemplate(
+                name=request.name,
+                description=request.description,
+                steps=steps,
+                source_case_id=case_id,
+            )
+        )
+        return workflow
+
+    @app.get("/api/workflows")
+    def list_workflows(current=Depends(get_state)):
+        return {"workflows": [workflow.model_dump(mode="json") for workflow in current.repository.list_workflows()]}
+
+    @app.post("/api/cases/{case_id}/workflows/{workflow_id}/run")
+    def run_workflow(case_id: str, workflow_id: str, current=Depends(get_state)):
+        case = current.repository.get_case(case_id)
+        if case is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        workflow = current.repository.get_workflow(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        datasets = current.repository.list_case_datasets(case_id)
+        active_dataset_id = datasets[-1].id if datasets else None
+        context = ToolContext(
+            case_id=case_id,
+            actor="workflow",
+            repository=current.repository,
+            plugin=current.plugin_registry.require(case.equipment_type),
+            metric_repository=current.metric_repository,
+        )
+        results = []
+        for step in workflow.steps:
+            tool_name = step.get("tool_name")
+            if not isinstance(tool_name, str):
+                continue
+            arguments = dict(step.get("arguments") or {})
+            if tool_name in {"parse_dataset", "inspect_dataset", "profile_dataset", "build_trend_chart"}:
+                if active_dataset_id is None:
+                    raise HTTPException(status_code=409, detail="workflow requires a dataset")
+                arguments["dataset_id"] = active_dataset_id
+            tool_result = current.agent.registry.run(tool_name, context, arguments)
+            results.append({"tool_name": tool_name, "summary": tool_result.summary})
+        return {"workflow": workflow, "results": results}
 
     @app.post("/api/cases")
     def create_case(request: CreateCaseRequest, current=Depends(get_state)):

@@ -19,6 +19,7 @@ from semidiag.domain import (
     LLMAuditEvent,
     MemoryRecord,
     ToolCallTrace,
+    WorkflowTemplate,
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -151,6 +152,16 @@ class SQLiteRepository:
             if len(matches) >= limit:
                 break
         return matches
+
+    def add_workflow(self, workflow: WorkflowTemplate) -> WorkflowTemplate:
+        self._put("workflow", workflow)
+        return workflow
+
+    def get_workflow(self, workflow_id: str) -> WorkflowTemplate | None:
+        return self._get("workflow", workflow_id, WorkflowTemplate)
+
+    def list_workflows(self) -> list[WorkflowTemplate]:
+        return self._list("workflow", WorkflowTemplate)
 
     def add_artifact(self, artifact: AnalysisArtifact) -> AnalysisArtifact:
         self._put("artifact", artifact)

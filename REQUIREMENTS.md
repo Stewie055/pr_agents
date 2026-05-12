@@ -62,6 +62,7 @@
 - In-process task queue foundation with task status API for future long-running analysis, chart, report, and workflow jobs.
 - Midterm memory persisted in SQLite and loaded into LLM case context.
 - Local knowledge records with keyword retrieval for knowledge_qa context, keeping vector RAG replaceable later.
+- Workflow template foundation with case trace capture and manual replay API.
 
 ## Non-Goals For Current Slice
 
