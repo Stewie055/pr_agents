@@ -69,9 +69,9 @@ bash scripts/check.sh
 ## Adding A Diagnostic Package
 
 1. 在 `business/services/` 中实现解析、清洗、指标画像、诊断、绘图和报告生成。
-2. 在 `business/plugins/` 中注册测校项或分析插件，manifest 声明场景、日志类型、型号、描述和 tool names。
-3. 在插件中声明 `tools=[ToolSpec(ToolDefinition(...), handler)]`，框架负责筛选插件并注册本轮可用工具。
-4. 在 `business/plugins/<plugin_file_stem>/skills/*.md` 中编写可选 Skill，描述测校分析方法和报告要求。
+2. 在 `business/plugins/<plugin_name>/plugin.json` 中声明测校项或分析插件 manifest，包括场景、日志类型、型号、工具名、Skill 名和配置需求。
+3. 在 `business/plugins/<plugin_name>/plugin.py` 中声明 `TOOLS=[ToolSpec(ToolDefinition(...), handler)]`，框架负责筛选插件并注册本轮可用工具。
+4. 在 `business/plugins/<plugin_name>/skills/*.md` 中编写可选 Skill，描述测校分析方法和报告要求。
 5. 解析流程应输出结构化指标，Tool 负责写入 `MetricRepository`。
 6. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
 7. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。
@@ -83,7 +83,8 @@ bash scripts/check.sh
 业务扩展文件放在仓库内 `business/`：
 
 - `business/tools/*.py`: 公共业务工具，文件必须提供 `register(registry)`。
-- `business/plugins/*.py`: LT 测校项插件，文件必须提供 `register(registry)`。
+- `business/plugins/<plugin_name>/plugin.json`: LT 测校项插件 manifest。
+- `business/plugins/<plugin_name>/plugin.py`: 插件工具实现，文件必须导出 `TOOLS`。
 - `business/services/*.py`: 保密业务实现或非保密示例 Service，由 Tool/Plugin 调用，不直接被 Agent 调用。
 
 服务启动时加载扩展。加载状态可通过 `GET /api/extensions` 查看，测校插件 manifest 可通过 `GET /api/calibrations` 查看。
@@ -105,6 +106,7 @@ bash scripts/check.sh
 - `GET /api/tasks/{task_id}`
 
 后续解析、绘图、PPT 和 Workflow 批处理应逐步迁移到该接口背后的任务抽象。
+当前通用 CSV 插件中的图表生成和 PPT 报告生成已经通过任务队列执行。
 
 ## Knowledge
 

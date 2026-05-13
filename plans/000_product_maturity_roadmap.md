@@ -19,6 +19,7 @@
 3. Async task and Workflow: 进程内任务队列、任务状态 API、Workflow 模板与重放。
 4. Memory and RAG: 中期记忆持久化、长期知识库抽象、检索增强问答。
 5. Product UI and operations: 案例管理、任务视图、产物版本、Trace 增强、日志和部署。
+6. Agent plugin maturity: manifest-first 插件发现、Skill 选择、工具裁剪、Guardrail 治理和任务型工具。
 
 ## Done Criteria
 

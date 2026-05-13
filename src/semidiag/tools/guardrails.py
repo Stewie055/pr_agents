@@ -37,6 +37,7 @@ class DefaultToolGuardrail:
                 bool(result.evidence),
                 bool(result.artifact_ids),
                 bool(result.evidence_ids),
+                bool(result.task_ids),
             ]
         )
         if not has_structured_output:

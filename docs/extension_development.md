@@ -11,9 +11,12 @@ business/
   tools/
     lt_log_pool_tool.py
   plugins/
-    csv_file_analysis.py
-    lt_example_calibration.py
+    csv_file_analysis/
+      plugin.json
+      plugin.py
     lt_example_calibration/
+      plugin.json
+      plugin.py
       skills/
         offline_check.md
   file_classifiers/
@@ -39,19 +42,16 @@ Tool 是 Agent 可调用的最小动作入口。handler 接收 `ToolContext` 和
 
 ## Calibration Plugin Files
 
-每个 `business/plugins/*.py` 必须提供：
+每个业务插件是一个目录：
 
-```python
-def register(registry):
-    registry.register(
-        CalibrationPlugin(
-            manifest=CalibrationPluginManifest(...),
-            tools=[ToolSpec(definition=ToolDefinition(...), handler=handler)],
-        )
-    )
+```text
+business/plugins/<plugin_name>/
+  plugin.json
+  plugin.py
+  skills/*.md
 ```
 
-Plugin 是测校项业务包。插件文件负责提供插件信息、工具信息和工具实现；框架负责读取 `CalibrationPlugin.tools`、按 manifest 做筛选，并把被选中插件的工具注册进本轮 active registry。业务开发者不需要实现 `build_tools`。
+Plugin 是测校项业务包。`plugin.json` 负责 manifest-only discovery，不执行业务代码即可发现插件信息、工具名、Skill 名和配置需求。`plugin.py` 只导出 `TOOLS = [ToolSpec(...)]`，提供工具实现。业务开发者不需要实现 `build_tools`，也不需要在 Python 中重复写插件 manifest。
 
 Manifest 必须声明：
 
@@ -62,19 +62,35 @@ Manifest 必须声明：
 - `log_kinds`
 - `supported_models`
 - `description`
-- `tool_names`
-- `skill_names`
+- `tools`
+- `skills`
 - `capability_tags`
 - `requires_config`
 
 Plugin tools 内部可以自由调用保密 Service、parser、cleaner、analyzer、plotter 和 reporter。平台只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
-`tool_names` 可省略，框架会从 `tools` 自动推导；如果显式声明，则必须和 `tools` 中的 ToolDefinition 名称一致，否则构建 active registry 时会报错，避免 Agent 看到不存在的能力。
-`skill_names` 可省略，框架会从 Markdown Skill 自动推导。`requires_config` 用于声明业务插件运行前需要的环境变量或配置项，当前只展示不强制拦截。
+`tools` 和 `skills` 当前可以写字符串数组。框架会把它们归一为 `tool_names` 和 `skill_names`。`requires_config` 用于声明业务插件运行前需要的环境变量或配置项；缺失时插件状态为 `degraded`，不会进入 Agent active tool registry。
 
-最小插件示例：
+`plugin.json` 示例：
+
+```json
+{
+  "plugin_id": "lt.example.measurement",
+  "display_name": "LT Example Measurement",
+  "equipment_type": "LT",
+  "scenarios": ["offline_setup"],
+  "log_kinds": ["LT-C"],
+  "supported_models": ["*"],
+  "description": "Example LT measurement analysis plugin.",
+  "capability_tags": ["lt", "measurement"],
+  "requires_config": [],
+  "tools": ["lt_example_measurement_analyze"],
+  "skills": ["lt_example_measurement"]
+}
+```
+
+`plugin.py` 示例：
 
 ```python
-from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
 from semidiag.tools import ToolContext, ToolDefinition, ToolResult, ToolSpec
 
 
@@ -89,34 +105,20 @@ def analyze(context: ToolContext, arguments: dict) -> ToolResult:
     )
 
 
-def register(registry):
-    registry.register(
-        CalibrationPlugin(
-            manifest=CalibrationPluginManifest(
-                plugin_id="lt.example.measurement",
-                display_name="LT Example Measurement",
-                equipment_type="LT",
-                scenarios=["offline_setup"],
-                log_kinds=["LT-C"],
-                supported_models=["*"],
-                description="Example LT measurement analysis plugin.",
-            ),
-            tools=[
-                ToolSpec(
-                    definition=ToolDefinition(
-                        name="lt_example_measurement_analyze",
-                        description="Analyze the current LT measurement log.",
-                        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-                        output_schema={"type": "object", "properties": {"status": {"type": "string"}}},
-                        origin="business:lt.example.measurement",
-                        phase="analyze",
-                        capability_tags=["lt", "measurement"],
-                    ),
-                    handler=analyze,
-                )
-            ],
-        )
+TOOLS = [
+    ToolSpec(
+        definition=ToolDefinition(
+            name="lt_example_measurement_analyze",
+            description="Analyze the current LT measurement log.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            output_schema={"type": "object", "properties": {"status": {"type": "string"}}},
+            origin="business:lt.example.measurement",
+            phase="analyze",
+            capability_tags=["lt", "measurement"],
+        ),
+        handler=analyze,
     )
+]
 ```
 
 ## ToolContext
@@ -141,7 +143,7 @@ Skill 是插件附带的业务指导文档，不执行代码。它用于告诉 A
 Skill 文件放在：
 
 ```text
-business/plugins/<plugin_file_stem>/skills/*.md
+business/plugins/<plugin_name>/skills/*.md
 ```
 
 Markdown 必须使用 frontmatter：
@@ -179,6 +181,7 @@ Tool handler 返回：
 - `artifacts`: 新产生的 Artifact 对象，Registry 会统一落库。
 - `evidence`: 新产生的 Evidence 对象，Registry 会统一落库。
 - `artifact_ids` / `evidence_ids`: 已有或新产生对象的引用。
+- `task_ids`: 异步任务引用，适用于绘图、PPT 报告和长耗时分析。
 - `next_suggestions`: 失败恢复或下一步候选工具名，仅作为 LLM 提示，不是强制流程。
 
 `ToolResult` 和 observation 不再拆成两个重复结构；Runtime 会直接把 ToolResult 转成统一 observation 字典回填模型。
@@ -195,15 +198,25 @@ Tool handler 返回：
 
 Guardrail 失败会写入 ToolCallTrace error，并作为 error observation 回填给模型。
 
+## Async Tool Tasks
+
+长耗时 Tool 应提交任务而不是阻塞请求线程。任务型 Tool 返回 `ToolResult(task_ids=[...], data={"task_id": ..., "task_status": ...})`，后台任务完成后自行写入 Artifact/Evidence。
+
+当前通用 CSV 插件已将 `build_trend_chart` 和 `generate_report` 改为任务型工具。任务状态 API：
+
+- `GET /api/tasks`
+- `GET /api/tasks/{task_id}`
+- `POST /api/tasks/{task_id}/cancel`
+
 ## File Classifiers
 
 文件类型识别放在 `business/file_classifiers/`，例如 `lt_log_metadata.py`。LT 日志的 `log_kind` 和 `scenario` 当前由 `detect_file_metadata(filename, content_type, content_preview)` 返回；真实业务可根据文件名后缀、内容头、魔数或日志片段扩展该函数。
 
 ## Loading Rules
 
-- 服务启动时扫描 `business/tools/*.py` 和 `business/plugins/*.py`；`business/services/*.py` 由这些扩展文件按需导入。
-- 文件必须有 callable `register(registry)`。
-- 单个文件加载失败不会阻断服务启动。
+- 服务启动时扫描 `business/tools/*.py` 和 `business/plugins/*/plugin.json`；`business/services/*.py` 由这些扩展文件按需导入。
+- Common tool 文件必须有 callable `register(registry)`；插件实现文件必须导出 `TOOLS: list[ToolSpec]`。
+- 单个扩展加载失败不会阻断服务启动。
 - 加载状态通过 `GET /api/extensions` 查看。
 - 测校插件 manifest 通过 `GET /api/calibrations` 查看。
 

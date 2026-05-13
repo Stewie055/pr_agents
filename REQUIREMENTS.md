@@ -14,6 +14,8 @@
 - 分析、诊断、报告路径必须使用 ReAct/Graph 执行模型，允许多轮工具调用、观察和继续推理。
 - 测校插件可以提供 Markdown Skill 文档，只有插件被选中时才注入 Agent 上下文。
 - Tool 调用必须经过框架默认 guardrail，拦截跨案例数据、手填内部 ID 和缺少结构化输出的结果。
+- 插件发现必须优先读取 manifest，不执行业务实现代码即可展示插件能力、工具、Skill、配置需求和状态。
+- 绘图、PPT 报告等长耗时 Tool 必须通过任务队列执行，并通过 task id 暴露状态。
 - 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、产物生成和最终回复增量。
 - Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
 - 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
@@ -64,10 +66,12 @@
 - Midterm memory persisted in SQLite and loaded into LLM case context.
 - Local knowledge records with keyword retrieval for knowledge_qa context, keeping vector RAG replaceable later.
 - Workflow template foundation with case trace capture and manual replay API.
-- Business extension loader for `business/tools/*.py` and `business/plugins/*.py` using `register(registry)`; business services live under `business/services`.
+- Business extension loader for `business/tools/*.py` and manifest-first `business/plugins/<plugin_name>/plugin.json`; business services live under `business/services`.
 - LT calibration plugin manifests and plugin-scoped tool exposure to avoid tool explosion.
 - Markdown Skill loader for selected calibration plugins.
 - Default Tool Guardrail for dataset ownership, system-managed dataset id, and structured ToolResult validation.
+- Manifest-first directory plugin packages under `business/plugins/<plugin_name>/`.
+- Async task ToolResult for CSV chart and PPT report tools.
 - LT log pool metadata detected from filename rules for LT-D, LT-C, and LT-R.
 
 ## Non-Goals For Current Slice

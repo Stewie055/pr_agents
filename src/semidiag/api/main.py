@@ -70,6 +70,7 @@ class AppState:
             plugin_registry=self.plugin_registry,
             calibration_registry=self.calibration_registry,
             metric_repository=self.metric_repository,
+            task_queue=self.task_queue,
         )
 
 
@@ -180,6 +181,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
             "calibrations": [
                 {
                     **plugin.manifest.model_dump(mode="json"),
+                    "status": plugin.status,
+                    "config_errors": plugin.config_errors,
+                    "implementation_path": plugin.implementation_path,
+                    "tools": [tool.definition.model_dump(mode="json") for tool in plugin.tools],
                     "skills": [skill.summary() for skill in plugin.skills],
                 }
                 for plugin in current.calibration_registry.list_plugins()
@@ -197,6 +202,13 @@ def create_app(state: AppState | None = None) -> FastAPI:
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str, current=Depends(get_state)):
         task = current.task_queue.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        return task
+
+    @app.post("/api/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str, current=Depends(get_state)):
+        task = current.task_queue.cancel(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
         return task
@@ -254,6 +266,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
             datasets=datasets,
             active_dataset=current.repository.get_dataset(active_dataset_id) if active_dataset_id else None,
             metric_repository=current.metric_repository,
+            task_queue=current.task_queue,
             generated_root=str(current.generated_root),
         )
         workflow_tool_names = {step.get("tool_name") for step in workflow.steps if isinstance(step.get("tool_name"), str)}

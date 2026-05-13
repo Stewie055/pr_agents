@@ -13,7 +13,7 @@ Service 层放在 `business/services/`，不依赖 WebUI、Agent 或 LLM。它�
 - `generate_report`
 
 真实业务迁移时，应优先把 Qt 程序里的解析、清洗、建模、绘图和报告逻辑抽成 Service。图表应由 Service 使用 Matplotlib 或业务绘图库生成 PNG/SVG/PDF 等文件，再通过 Artifact 暴露给 Agent 和 WebUI；Agent 不直接绘图。
-Service 由 `business/plugins/*.py` 或 `business/tools/*.py` 调用。平台核心只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
+Service 由 `business/plugins/<plugin_name>/plugin.py` 或 `business/tools/*.py` 调用。平台核心只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
 解析类 Tool 会把 Service 提取出的结构化指标写入 `MetricRepository`；当前默认 SQLite 实现，生产目标是 ClickHouse adapter。
 长耗时 Service 调用后续应由任务队列承载，Tool/API 负责创建任务和暴露状态，不让请求线程长期阻塞。
 Workflow 重放复用 Tool Registry 执行步骤，因此 Tool 必须保持幂等或能安全重复生成新 Artifact/Trace。
@@ -51,6 +51,7 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 
 `dataset_id` 这类系统参数应放入 `system_injected_args`。Runtime 会自动注入，LLM 可见 schema 会隐藏这些字段，用户也不需要手动提供内部 ID。
 如果模型或用户传入未声明为系统注入的 `dataset_id`，Tool 调用会被 guardrail 拦截并记录错误 trace。
+任务型 Tool 应返回 `task_ids` 并把任务状态写入 `data`。任务 handler 完成后负责落库 Artifact/Evidence。
 
 ## ToolResult Observation Payload
 
@@ -60,6 +61,7 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 - `data`
 - `artifact_ids`
 - `evidence_ids`
+- `task_ids`
 - `next_suggestions`
 
 Runtime 会补充 `tool_name` 并回填给 LLM。Observation 面向 LLM 推理，不等同于前端展示文本。它应包含足够的结构化信息，例如字段名、列类型、统计摘要、趋势序列名、诊断结论和建议动作，但不应包含完整原始文件内容。

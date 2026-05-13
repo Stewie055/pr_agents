@@ -1,0 +1,17 @@
+{
+  "plugin_id": "lt.example.offline_check",
+  "display_name": "LT Example Offline Check",
+  "equipment_type": "LT",
+  "description": "Non-confidential example calibration plugin for LT-C and LT-R offline setup logs.",
+  "scenarios": ["offline_setup"],
+  "log_kinds": ["LT-C", "LT-R"],
+  "supported_models": ["*"],
+  "capability_tags": ["LT", "offline_setup", "example"],
+  "tools": [
+    "lt_example_offline_prepare",
+    "lt_example_offline_analyze"
+  ],
+  "skills": [
+    "lt_example_offline_check"
+  ]
+}

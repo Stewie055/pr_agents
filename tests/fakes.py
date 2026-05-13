@@ -10,11 +10,11 @@ from semidiag.tools import ToolRegistry
 
 
 def build_csv_tool_registry() -> ToolRegistry:
-    from business.plugins.csv_file_analysis import register
+    from semidiag.extensions import ExtensionLoader
     from semidiag.plugins import CalibrationPluginRegistry, ToolScopeBuilder
 
     calibration_registry = CalibrationPluginRegistry()
-    register(calibration_registry)
+    ExtensionLoader("business").load_plugins(calibration_registry)
     return ToolScopeBuilder(common_registry=ToolRegistry(), calibration_registry=calibration_registry).build(
         selected_plugin_ids=["csv.file_analysis"]
     )

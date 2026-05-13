@@ -13,6 +13,7 @@ from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, St
 from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.infrastructure.tasks import InProcessTaskQueue
 from semidiag.plugins import (
     CalibrationPluginRegistry,
     CalibrationSelection,
@@ -69,6 +70,7 @@ class AgentRuntime:
         plugin_registry: PluginRegistry | None = None,
         calibration_registry: CalibrationPluginRegistry | None = None,
         metric_repository: MetricRepository | None = None,
+        task_queue: InProcessTaskQueue | None = None,
     ) -> None:
         self.repository = repository
         self.registry = registry or build_default_registry()
@@ -79,6 +81,7 @@ class AgentRuntime:
         self.calibration_registry = calibration_registry or CalibrationPluginRegistry()
         self.plugin_selector = PluginSelectorAgent(self.llm, self.calibration_registry)
         self.metric_repository = metric_repository
+        self.task_queue = task_queue or InProcessTaskQueue()
         self.router = LLMRouter(self.llm)
         self.state_gate = StateGate()
 
@@ -256,6 +259,7 @@ class AgentRuntime:
                         "data": {},
                         "artifact_ids": [],
                         "evidence_ids": [],
+                        "task_ids": [],
                         "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
                     }
                 tool_observations.append(observation)
@@ -348,6 +352,7 @@ class AgentRuntime:
                             "summary": observation.get("summary") or tool_result.summary,
                             "artifact_ids": observation.get("artifact_ids", []),
                             "evidence_ids": observation.get("evidence_ids", []),
+                            "task_ids": observation.get("task_ids", []),
                         },
                     )
                     for artifact in tool_result.artifacts:
@@ -371,6 +376,7 @@ class AgentRuntime:
                         "data": {},
                         "artifact_ids": [],
                         "evidence_ids": [],
+                        "task_ids": [],
                         "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
                     }
                     yield AgentStreamEvent(
@@ -421,6 +427,7 @@ class AgentRuntime:
             datasets=self.repository.list_case_datasets(state.case_id),
             active_dataset=self.repository.get_dataset(state.active_dataset_id) if state.active_dataset_id else None,
             metric_repository=self.metric_repository,
+            task_queue=self.task_queue,
             generated_root=str(self.generated_root),
         )
 
@@ -525,6 +532,7 @@ class AgentRuntime:
             "data": tool_result.data,
             "artifact_ids": tool_result.artifact_ids or [artifact.id for artifact in tool_result.artifacts],
             "evidence_ids": tool_result.evidence_ids or [evidence.id for evidence in tool_result.evidence],
+            "task_ids": tool_result.task_ids,
             "next_suggestions": tool_result.next_suggestions,
         }
 

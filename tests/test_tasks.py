@@ -46,3 +46,15 @@ def test_task_status_api_returns_queue_snapshot(tmp_path):
     assert listed.json()["tasks"][0]["id"] == task.id
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "succeeded"
+
+
+def test_task_cancel_api_returns_task_snapshot(tmp_path):
+    state = AppState(tmp_path)
+    task = state.task_queue.submit(name="demo", payload={"value": 2}, handler=lambda payload: {"result": payload["value"] + 1})
+    app = create_app(state)
+    client = TestClient(app)
+
+    response = client.post(f"/api/tasks/{task.id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == task.id

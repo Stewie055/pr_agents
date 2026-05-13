@@ -25,7 +25,7 @@ class PluginSelectorAgent:
         self.max_plugins = max_plugins
 
     def select(self, context: PluginSelectionContext) -> CalibrationSelection:
-        manifests = self.registry.list_manifests()
+        manifests = self.registry.list_ready_manifests()
         if not manifests:
             return CalibrationSelection(reason="No calibration plugins loaded.")
 
@@ -65,6 +65,6 @@ class PluginSelectorAgent:
         return self._filter_existing(selection)
 
     def _filter_existing(self, selection: CalibrationSelection) -> CalibrationSelection:
-        existing = {manifest.plugin_id for manifest in self.registry.list_manifests()}
+        existing = {manifest.plugin_id for manifest in self.registry.list_ready_manifests()}
         selection.plugin_ids = [plugin_id for plugin_id in selection.plugin_ids if plugin_id in existing][: self.max_plugins]
         return selection

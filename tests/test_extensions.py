@@ -52,23 +52,27 @@ def test_extension_loader_records_bad_extension_without_failing_startup(tmp_path
 
 
 def test_calibration_plugin_registry_lists_manifests_without_running_tools(tmp_path):
-    plugins_dir = tmp_path / "business" / "plugins"
-    plugins_dir.mkdir(parents=True)
-    (plugins_dir / "calibration.py").write_text(
+    plugin_dir = tmp_path / "business" / "plugins" / "calibration"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
         """
-from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+{
+  "plugin_id": "lt.lazy",
+  "display_name": "Lazy",
+  "log_kinds": ["LT-D"],
+  "tools": ["lt_lazy"]
+}
+""",
+        encoding="utf-8",
+    )
+    (plugin_dir / "plugin.py").write_text(
+        """
 from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
 
 def lazy_tool(context, arguments):
     raise RuntimeError("tools should be lazy")
 
-def register(registry):
-    registry.register(
-        CalibrationPlugin(
-            manifest=CalibrationPluginManifest(plugin_id="lt.lazy", display_name="Lazy", log_kinds=["LT-D"]),
-            tools=[ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)],
-        )
-    )
+TOOLS = [ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)]
 """,
         encoding="utf-8",
     )
@@ -78,27 +82,32 @@ def register(registry):
 
     assert registry.list_manifests()[0].plugin_id == "lt.lazy"
     assert registry.list_manifests()[0].tool_names == ["lt_lazy"]
+    assert registry.get("lt.lazy").status == "ready"
 
 
 def test_extension_loader_loads_markdown_skills_for_plugins(tmp_path):
-    plugins_dir = tmp_path / "business" / "plugins"
-    skills_dir = plugins_dir / "calibration" / "skills"
+    plugin_dir = tmp_path / "business" / "plugins" / "calibration"
+    skills_dir = plugin_dir / "skills"
     skills_dir.mkdir(parents=True)
-    (plugins_dir / "calibration.py").write_text(
+    (plugin_dir / "plugin.json").write_text(
         """
-from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+{
+  "plugin_id": "lt.lazy",
+  "display_name": "Lazy",
+  "tools": ["lt_lazy"],
+  "skills": ["lt_lazy_skill"]
+}
+""",
+        encoding="utf-8",
+    )
+    (plugin_dir / "plugin.py").write_text(
+        """
 from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
 
 def lazy_tool(context, arguments):
     return ToolResult(summary="ok", data={"ok": True})
 
-def register(registry):
-    registry.register(
-        CalibrationPlugin(
-            manifest=CalibrationPluginManifest(plugin_id="lt.lazy", display_name="Lazy"),
-            tools=[ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)],
-        )
-    )
+TOOLS = [ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)]
 """,
         encoding="utf-8",
     )
@@ -126,6 +135,99 @@ Use this lazy skill only for selected lazy plugin analysis.
     assert plugin.manifest.skill_names == ["lt_lazy_skill"]
     assert plugin.skills[0].description == "Lazy skill guidance."
     assert any(event.extension_type == "skill" and event.status == "loaded" for event in loader.report.events)
+
+
+def test_extension_loader_marks_missing_plugin_config_degraded(tmp_path, monkeypatch):
+    plugin_dir = tmp_path / "business" / "plugins" / "calibration"
+    plugin_dir.mkdir(parents=True)
+    monkeypatch.delenv("MISSING_PLUGIN_SETTING", raising=False)
+    (plugin_dir / "plugin.json").write_text(
+        """
+{
+  "plugin_id": "lt.degraded",
+  "display_name": "Degraded",
+  "tools": ["lt_degraded"],
+  "requires_config": ["MISSING_PLUGIN_SETTING"]
+}
+""",
+        encoding="utf-8",
+    )
+    (plugin_dir / "plugin.py").write_text("raise RuntimeError('should not import degraded plugin')\n", encoding="utf-8")
+    registry = CalibrationPluginRegistry()
+    report = ExtensionLoader(tmp_path / "business").load_plugins(registry)
+
+    plugin = registry.get("lt.degraded")
+    assert plugin is not None
+    assert plugin.status == "degraded"
+    assert plugin.tools == []
+    assert report.events[0].status == "degraded"
+
+
+def test_extension_loader_rejects_manifest_tool_mismatch(tmp_path):
+    plugin_dir = tmp_path / "business" / "plugins" / "calibration"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        """
+{
+  "plugin_id": "lt.bad",
+  "display_name": "Bad",
+  "tools": ["declared_tool"]
+}
+""",
+        encoding="utf-8",
+    )
+    (plugin_dir / "plugin.py").write_text(
+        """
+from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
+
+def actual(context, arguments):
+    return ToolResult(summary="ok", data={"ok": True})
+
+TOOLS = [ToolSpec(ToolDefinition(name="actual_tool", description="actual"), actual)]
+""",
+        encoding="utf-8",
+    )
+    registry = CalibrationPluginRegistry()
+
+    report = ExtensionLoader(tmp_path / "business").load_plugins(registry)
+
+    assert registry.get("lt.bad") is None
+    assert report.events[0].status == "error"
+    assert "missing tool" in (report.events[0].error or "")
+
+
+def test_extension_loader_reports_missing_declared_skill(tmp_path):
+    plugin_dir = tmp_path / "business" / "plugins" / "calibration"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        """
+{
+  "plugin_id": "lt.missing_skill",
+  "display_name": "Missing Skill",
+  "tools": ["lt_tool"],
+  "skills": ["missing_skill"]
+}
+""",
+        encoding="utf-8",
+    )
+    (plugin_dir / "plugin.py").write_text(
+        """
+from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
+
+def tool(context, arguments):
+    return ToolResult(summary="ok", data={"ok": True})
+
+TOOLS = [ToolSpec(ToolDefinition(name="lt_tool", description="tool"), tool)]
+""",
+        encoding="utf-8",
+    )
+    registry = CalibrationPluginRegistry()
+    loader = ExtensionLoader(tmp_path / "business")
+
+    loader.load_plugins(registry)
+    loader.load_plugin_skills(registry)
+
+    assert any(event.extension_type == "skill" and event.status == "error" for event in loader.report.events)
 
 
 def test_extension_loader_records_bad_markdown_skill(tmp_path):
@@ -192,6 +294,8 @@ def test_api_lists_calibrations_and_extension_errors(tmp_path):
     assert calibrations.status_code == 200
     assert any(item["plugin_id"] == "lt.example.offline_check" for item in calibrations.json()["calibrations"])
     assert any(item["skills"] for item in calibrations.json()["calibrations"] if item["plugin_id"] == "lt.example.offline_check")
+    assert any(item["status"] == "ready" for item in calibrations.json()["calibrations"])
+    assert any(item["tools"] for item in calibrations.json()["calibrations"])
     assert extensions.status_code == 200
     assert any(item["status"] == "loaded" for item in extensions.json()["extensions"])
     assert tools.status_code == 200

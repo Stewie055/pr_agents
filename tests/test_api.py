@@ -33,6 +33,11 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
     return events
 
 
+def wait_for_tasks(state: AppState) -> None:
+    for task in state.task_queue.list_tasks():
+        state.task_queue.wait(task.id, timeout=30)
+
+
 def test_api_case_upload_and_agent_message(tmp_path):
     state = AppState(tmp_path)
     state.agent = AgentRuntime(
@@ -43,6 +48,7 @@ def test_api_case_upload_and_agent_message(tmp_path):
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)
@@ -65,11 +71,13 @@ def test_api_case_upload_and_agent_message(tmp_path):
     body = response.json()
     assert body["message"]["role"] == "assistant"
     assert any(item["kind"] == "diagnosis" for item in body["artifacts"])
-    assert any(item["kind"] == "chart" and item["data"]["render_type"] == "image" for item in body["artifacts"])
+    wait_for_tasks(state)
+    snapshot = client.get(f"/api/cases/{case_id}").json()
+    assert any(item["kind"] == "chart" and item["data"]["render_type"] == "image" for item in snapshot["artifacts"])
     assert any(trace["tool_name"] == "diagnose_performance" for trace in body["tool_traces"])
     assert len(state.metric_repository.list_dataset_points(dataset_id)) == 20
 
-    chart = next(item for item in body["artifacts"] if item["kind"] == "chart" and item["data"]["render_type"] == "image")
+    chart = next(item for item in snapshot["artifacts"] if item["kind"] == "chart" and item["data"]["render_type"] == "image")
     chart_file = client.get(f"/api/artifacts/{chart['id']}/file")
     assert chart_file.status_code == 200
     assert chart_file.headers["content-type"].startswith("image/png")
@@ -86,6 +94,7 @@ def test_api_detects_lt_log_metadata_and_returns_scoped_tools(tmp_path):
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)
@@ -116,6 +125,7 @@ def test_api_streams_agent_events(tmp_path):
         generated_root=str(state.generated_root),
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)
@@ -158,6 +168,7 @@ def test_api_lists_tool_contracts(tmp_path):
         generated_root=str(state.generated_root),
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)
@@ -198,6 +209,7 @@ def test_api_generates_downloadable_ppt_report(tmp_path):
         generated_root=str(state.generated_root),
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)
@@ -214,7 +226,9 @@ def test_api_generates_downloadable_ppt_report(tmp_path):
     )
 
     assert response.status_code == 200
-    reports = [item for item in response.json()["artifacts"] if item["kind"] == "report"]
+    wait_for_tasks(state)
+    snapshot = client.get(f"/api/cases/{case['id']}").json()
+    reports = [item for item in snapshot["artifacts"] if item["kind"] == "report"]
     assert reports
     report = reports[-1]
     assert report["data"]["format"] == "pptx"
@@ -237,6 +251,7 @@ def test_api_creates_and_runs_workflow_from_case(tmp_path):
         plugin_registry=state.plugin_registry,
         calibration_registry=state.calibration_registry,
         metric_repository=state.metric_repository,
+        task_queue=state.task_queue,
     )
     app = create_app(state)
     client = TestClient(app)

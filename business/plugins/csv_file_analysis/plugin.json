@@ -1,0 +1,17 @@
+{
+  "plugin_id": "csv.file_analysis",
+  "display_name": "CSV File Analysis",
+  "equipment_type": "generic_semiconductor_tool",
+  "description": "General CSV file analysis plugin for parsing, profiling, charting, diagnosis, and PPT report generation.",
+  "supported_models": ["*"],
+  "capability_tags": ["csv", "profile", "chart", "report"],
+  "tools": [
+    "parse_dataset",
+    "inspect_dataset",
+    "profile_dataset",
+    "build_trend_chart",
+    "diagnose_performance",
+    "generate_report"
+  ],
+  "skills": []
+}

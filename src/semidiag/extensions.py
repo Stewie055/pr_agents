@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
 from semidiag.plugins.skills import load_markdown_skill
+from semidiag.tools import ToolSpec
 
 
 @dataclass
@@ -40,7 +44,11 @@ class ExtensionLoader:
         return self.report
 
     def load_plugins(self, registry) -> ExtensionLoadReport:
-        self._load_directory(self.extension_root / "plugins", "plugin", registry)
+        plugins_dir = self.extension_root / "plugins"
+        if not plugins_dir.exists():
+            return self.report
+        for path in sorted(plugins_dir.glob("*/plugin.json")):
+            self._load_plugin_package(path=path, registry=registry)
         return self.report
 
     def load_plugin_skills(self, registry) -> ExtensionLoadReport:
@@ -49,6 +57,7 @@ class ExtensionLoader:
             return self.report
         for path in sorted(plugins_dir.glob("*/skills/*.md")):
             self._load_skill_file(path=path, registry=registry)
+        self._validate_declared_skills(plugins_dir=plugins_dir, registry=registry)
         return self.report
 
     def _load_directory(self, directory: Path, extension_type: str, registry) -> None:
@@ -71,6 +80,79 @@ class ExtensionLoader:
             return
         self.report.add(path=path, extension_type=extension_type, status="loaded")
 
+    def _load_plugin_package(self, *, path: Path, registry) -> None:
+        plugin_dir = path.parent
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            tool_names = [self._tool_name(item) for item in payload.get("tools", [])]
+            skill_names = [self._skill_name(item) for item in payload.get("skills", [])]
+            manifest = CalibrationPluginManifest.model_validate(
+                {
+                    **payload,
+                    "tool_names": tool_names,
+                    "skill_names": skill_names,
+                }
+            )
+            config_errors = [name for name in manifest.requires_config if not os.getenv(name)]
+            status = "degraded" if config_errors else "ready"
+            tools: list[ToolSpec] = []
+            implementation_path = plugin_dir / "plugin.py"
+            if status == "ready":
+                tools = self._load_plugin_tools(path=implementation_path)
+                self._validate_tool_contracts(plugin_id=manifest.plugin_id, manifest_tool_names=tool_names, tools=tools)
+            registry.register(
+                CalibrationPlugin(
+                    manifest=manifest,
+                    tools=tools,
+                    status=status,
+                    config_errors=config_errors,
+                    implementation_path=str(implementation_path),
+                )
+            )
+        except Exception as exc:
+            self.report.add(path=path, extension_type="plugin_manifest", status="error", error=str(exc))
+            return
+        self.report.add(
+            path=path,
+            extension_type="plugin_manifest",
+            status="loaded" if status == "ready" else "degraded",
+            error=", ".join(config_errors) if config_errors else None,
+        )
+        if status == "ready":
+            self.report.add(path=implementation_path, extension_type="plugin", status="loaded")
+
+    def _load_plugin_tools(self, *, path: Path) -> list[ToolSpec]:
+        if not path.exists():
+            raise ValueError(f"plugin implementation file not found: {path}")
+        module = self._import_module(path)
+        tools = getattr(module, "TOOLS", None)
+        if not isinstance(tools, list) or not all(isinstance(item, ToolSpec) for item in tools):
+            raise ValueError("plugin.py must export TOOLS: list[ToolSpec]")
+        return tools
+
+    def _validate_tool_contracts(self, *, plugin_id: str, manifest_tool_names: list[str], tools: list[ToolSpec]) -> None:
+        actual_names = [tool.definition.name for tool in tools]
+        missing = set(manifest_tool_names) - set(actual_names)
+        extra = set(actual_names) - set(manifest_tool_names)
+        if missing:
+            raise ValueError(f"Plugin {plugin_id} manifest declares missing tool(s): {', '.join(sorted(missing))}")
+        if extra:
+            raise ValueError(f"Plugin {plugin_id} implementation contains undeclared tool(s): {', '.join(sorted(extra))}")
+
+    def _tool_name(self, item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            return item["name"]
+        raise ValueError(f"invalid tool declaration in plugin manifest: {item}")
+
+    def _skill_name(self, item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            return item["name"]
+        raise ValueError(f"invalid skill declaration in plugin manifest: {item}")
+
     def _load_skill_file(self, *, path: Path, registry) -> None:
         try:
             skill = load_markdown_skill(path)
@@ -79,6 +161,19 @@ class ExtensionLoader:
             self.report.add(path=path, extension_type="skill", status="error", error=str(exc))
             return
         self.report.add(path=path, extension_type="skill", status="loaded")
+
+    def _validate_declared_skills(self, *, plugins_dir: Path, registry) -> None:
+        for plugin in registry.list_plugins():
+            declared = set(plugin.manifest.skill_names)
+            loaded = {skill.name for skill in plugin.skills}
+            missing = declared - loaded
+            if missing:
+                self.report.add(
+                    path=plugins_dir / plugin.manifest.plugin_id,
+                    extension_type="skill",
+                    status="error",
+                    error=f"Plugin {plugin.manifest.plugin_id} declares missing skill(s): {', '.join(sorted(missing))}",
+                )
 
     def _import_module(self, path: Path) -> ModuleType:
         module_name = f"semidiag_business_{path.stem}_{abs(hash(path))}"

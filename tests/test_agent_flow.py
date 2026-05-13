@@ -32,6 +32,11 @@ def load_demo_calibrations() -> CalibrationPluginRegistry:
     return registry
 
 
+def wait_for_tasks(runtime: AgentRuntime) -> None:
+    for task in runtime.task_queue.list_tasks():
+        runtime.task_queue.wait(task.id, timeout=30)
+
+
 def test_agent_runs_diagnostic_tool_loop(tmp_path):
     repository = SQLiteRepository(tmp_path / "test.sqlite3")
     file_store = LocalFileStore(tmp_path / "files")
@@ -65,8 +70,10 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
         "build_trend_chart",
         "diagnose_performance",
     }
-    assert {artifact.kind for artifact in result.artifacts} >= {"dataset", "table", "chart", "diagnosis"}
-    charts = [artifact for artifact in result.artifacts if artifact.kind == "chart" and artifact.data.get("render_type") == "image"]
+    wait_for_tasks(runtime)
+    artifacts = repository.list_case_artifacts(case.id)
+    assert {artifact.kind for artifact in artifacts} >= {"dataset", "table", "chart", "diagnosis"}
+    charts = [artifact for artifact in artifacts if artifact.kind == "chart" and artifact.data.get("render_type") == "image"]
     assert charts
     assert all((tmp_path / "generated") in Path(chart.data["file_path"]).parents for chart in charts)
     assert repository.list_case_evidence(case.id)
@@ -92,6 +99,7 @@ def test_agent_generates_report_when_requested(tmp_path):
         calibration_registry=load_demo_calibrations(),
     )
     runtime.handle_user_message(case_id=case.id, content="生成诊断报告", dataset_id=dataset.id)
+    wait_for_tasks(runtime)
 
     reports = [artifact for artifact in repository.list_case_artifacts(case.id) if artifact.kind == "report"]
     assert reports
@@ -122,8 +130,13 @@ def test_agent_selects_plugin_by_case_equipment_type(tmp_path):
         calibration_registry=load_demo_calibrations(),
     )
 
-    result = runtime.handle_user_message(case_id=case.id, content="请分析趋势", dataset_id=dataset.id)
+    runtime.handle_user_message(case_id=case.id, content="请分析趋势", dataset_id=dataset.id)
+    wait_for_tasks(runtime)
 
-    charts = [artifact for artifact in result.artifacts if artifact.kind == "chart" and artifact.data.get("render_type") == "image"]
+    charts = [
+        artifact
+        for artifact in repository.list_case_artifacts(case.id)
+        if artifact.kind == "chart" and artifact.data.get("render_type") == "image"
+    ]
     assert charts
     assert all(generated_root in Path(chart.data["file_path"]).parents for chart in charts)

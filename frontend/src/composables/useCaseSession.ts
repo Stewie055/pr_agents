@@ -138,7 +138,8 @@ export function useCaseSession() {
       return;
     }
     if (event.event === "tool_result") {
-      completeRunning(event.data.error ? "error" : "done", event.data.summary);
+      const taskDetail = event.data.task_ids?.length ? `任务：${event.data.task_ids.join(", ")}` : event.data.summary;
+      completeRunning(event.data.error ? "error" : "done", taskDetail);
       return;
     }
     if (event.event === "artifact_created") {

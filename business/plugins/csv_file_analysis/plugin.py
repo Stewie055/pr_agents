@@ -4,12 +4,9 @@ from typing import Any
 
 from business.services.csv_file_analysis import CSVDiagnosticService
 from semidiag.infrastructure.metrics import MetricPoint
-from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
 from semidiag.tools import ToolContext, ToolDefinition, ToolResult, ToolSpec
 
-
-def register(registry):
-    tools = [
+TOOLS = [
         ToolSpec(
             definition=ToolDefinition(
                 name="parse_dataset",
@@ -25,7 +22,7 @@ def register(registry):
                 system_injected_args=["dataset_id"],
                 recovery_suggestions=["inspect_dataset"],
             ),
-            handler=parse_dataset,
+            handler=lambda context, arguments: parse_dataset(context, arguments),
         ),
         ToolSpec(
             definition=ToolDefinition(
@@ -42,7 +39,7 @@ def register(registry):
                 system_injected_args=["dataset_id"],
                 recovery_suggestions=["parse_dataset"],
             ),
-            handler=inspect_dataset,
+            handler=lambda context, arguments: inspect_dataset(context, arguments),
         ),
         ToolSpec(
             definition=ToolDefinition(
@@ -59,7 +56,7 @@ def register(registry):
                 system_injected_args=["dataset_id"],
                 recovery_suggestions=["inspect_dataset", "parse_dataset"],
             ),
-            handler=profile_dataset,
+            handler=lambda context, arguments: profile_dataset(context, arguments),
         ),
         ToolSpec(
             definition=ToolDefinition(
@@ -73,7 +70,7 @@ def register(registry):
                 system_injected_args=["dataset_id"],
                 recovery_suggestions=["inspect_dataset", "profile_dataset"],
             ),
-            handler=build_trend_chart,
+            handler=lambda context, arguments: build_trend_chart(context, arguments),
         ),
         ToolSpec(
             definition=ToolDefinition(
@@ -90,7 +87,7 @@ def register(registry):
                 system_injected_args=["dataset_id"],
                 recovery_suggestions=["profile_dataset", "build_trend_chart"],
             ),
-            handler=diagnose_performance,
+            handler=lambda context, arguments: diagnose_performance(context, arguments),
         ),
         ToolSpec(
             definition=ToolDefinition(
@@ -103,21 +100,9 @@ def register(registry):
                 capability_tags=["report", "pptx", "csv"],
                 system_injected_args=["dataset_id"],
             ),
-            handler=generate_report,
+            handler=lambda context, arguments: generate_report(context, arguments),
         ),
-    ]
-    registry.register(
-        CalibrationPlugin(
-            manifest=CalibrationPluginManifest(
-                plugin_id="csv.file_analysis",
-                display_name="CSV File Analysis",
-                equipment_type="generic_semiconductor_tool",
-                description="General CSV file analysis plugin for parsing, profiling, charting, diagnosis, and PPT report generation.",
-                supported_models=["*"],
-            ),
-            tools=tools,
-        )
-    )
+]
 
 
 def _service(context: ToolContext) -> CSVDiagnosticService:
@@ -130,6 +115,12 @@ def _active_dataset(context: ToolContext):
     if context.active_dataset.case_id != context.case_id:
         raise ValueError("Active dataset does not belong to the current case.")
     return context.active_dataset
+
+
+def _submit_task(context: ToolContext, *, name: str, payload: dict[str, Any], handler):
+    if context.task_queue is None:
+        raise ValueError("Task queue is not available for asynchronous tool execution.")
+    return context.task_queue.submit(name=name, payload=payload, handler=handler)
 
 
 def parse_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
@@ -202,29 +193,41 @@ def profile_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResu
 
 def build_trend_chart(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
     dataset = _active_dataset(context)
-    artifacts = _service(context).build_chart(case_id=context.case_id, dataset_id=dataset.id, path=dataset.path)
-    chart_artifacts = [artifact for artifact in artifacts if artifact.kind == "chart"]
-    image_charts = [artifact for artifact in chart_artifacts if artifact.data.get("render_type") == "image"]
-    summary = f"Generated {len(image_charts)} Matplotlib chart file(s)." if image_charts else artifacts[0].summary
-    return ToolResult(
-        summary=summary,
-        data={
-            "render_type": "image" if image_charts else "none",
+    repository = context.repository
+    generated_root = context.generated_root
+
+    def run_chart_task(payload: dict[str, Any]) -> dict[str, Any]:
+        service = CSVDiagnosticService(generated_root=generated_root)
+        artifacts = service.build_chart(
+            case_id=str(payload["case_id"]),
+            dataset_id=str(payload["dataset_id"]),
+            path=str(payload["path"]),
+        )
+        for artifact in artifacts:
+            repository.add_artifact(artifact)
+        chart_artifacts = [artifact for artifact in artifacts if artifact.kind == "chart"]
+        image_charts = [artifact for artifact in chart_artifacts if artifact.data.get("render_type") == "image"]
+        return {
+            "artifact_ids": [artifact.id for artifact in artifacts],
             "chart_count": len(image_charts),
-            "charts": [
-                {
-                    "title": artifact.title,
-                    "figure_kind": artifact.data.get("figure_kind"),
-                    "display_group": artifact.data.get("display_group"),
-                    "series_names": artifact.data.get("series_names", []),
-                    "point_count": artifact.data.get("point_count", 0),
-                    "mime_type": artifact.data.get("mime_type"),
-                }
-                for artifact in image_charts
-            ],
+            "render_type": "image" if image_charts else "none",
+        }
+
+    task = _submit_task(
+        context,
+        name="csv.build_trend_chart",
+        payload={"case_id": context.case_id, "dataset_id": dataset.id, "path": dataset.path},
+        handler=run_chart_task,
+    )
+    return ToolResult(
+        summary="Submitted Matplotlib trend chart generation task.",
+        data={
+            "task_id": task.id,
+            "task_name": task.name,
+            "task_status": task.status,
+            "expected_artifact_kind": "chart",
         },
-        artifacts=artifacts,
-        artifact_ids=[artifact.id for artifact in artifacts],
+        task_ids=[task.id],
         next_suggestions=["diagnose_performance"],
     )
 
@@ -254,19 +257,35 @@ def diagnose_performance(context: ToolContext, arguments: dict[str, Any]) -> Too
 
 
 def generate_report(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:
-    artifacts = context.repository.list_case_artifacts(context.case_id)
-    evidence = context.repository.list_case_evidence(context.case_id)
-    artifact = _service(context).generate_report(case_id=context.case_id, artifacts=artifacts, evidence=evidence)
-    return ToolResult(
-        summary=artifact.summary,
-        data={
-            "sections": [section.get("heading") for section in artifact.data.get("sections", [])],
+    repository = context.repository
+    generated_root = context.generated_root
+
+    def run_report_task(payload: dict[str, Any]) -> dict[str, Any]:
+        service = CSVDiagnosticService(generated_root=generated_root)
+        artifacts = repository.list_case_artifacts(str(payload["case_id"]))
+        evidence = repository.list_case_evidence(str(payload["case_id"]))
+        artifact = service.generate_report(case_id=str(payload["case_id"]), artifacts=artifacts, evidence=evidence)
+        repository.add_artifact(artifact)
+        return {
+            "artifact_ids": [artifact.id],
             "format": artifact.data.get("format"),
             "mime_type": artifact.data.get("mime_type"),
-            "chart_count": artifact.data.get("chart_count", 0),
-            "template_engine": artifact.data.get("template_engine"),
             "filename": artifact.data.get("filename"),
+        }
+
+    task = _submit_task(
+        context,
+        name="csv.generate_report",
+        payload={"case_id": context.case_id},
+        handler=run_report_task,
+    )
+    return ToolResult(
+        summary="Submitted PPTX diagnostic report generation task.",
+        data={
+            "task_id": task.id,
+            "task_name": task.name,
+            "task_status": task.status,
+            "expected_artifact_kind": "report",
         },
-        artifacts=[artifact],
-        artifact_ids=[artifact.id],
+        task_ids=[task.id],
     )

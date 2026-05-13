@@ -17,7 +17,7 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 - `started`: 请求进入 Agent runtime。
 - `route`: 返回 intent、目标和路由原因。
 - `tool_start`: 工具开始执行。
-- `tool_result`: 工具完成或失败，返回用户可见 summary。
+- `tool_result`: 工具完成、失败或提交异步任务，返回用户可见 summary、Artifact/Evidence 引用和 task ids。
 - `artifact_created`: 新图表、诊断或报告 Artifact 已保存。
 - `message_delta`: 最终回复文本增量。
 - `final`: 返回最终 assistant message、Artifacts 和 Tool traces。

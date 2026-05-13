@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from semidiag.domain import AnalysisArtifact, AuditEvent, DatasetRecord, DiagnosticCase, Evidence, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.infrastructure.tasks import InProcessTaskQueue
 from semidiag.tools.guardrails import DefaultToolGuardrail, ToolGuardrail
 
 
@@ -62,6 +63,7 @@ class ToolContext:
     datasets: list[DatasetRecord] = field(default_factory=list)
     active_dataset: DatasetRecord | None = None
     metric_repository: MetricRepository | None = None
+    task_queue: InProcessTaskQueue | None = None
     generated_root: str = "var/generated"
 
 
@@ -73,6 +75,7 @@ class ToolResult:
     evidence: list[Evidence] = field(default_factory=list)
     artifact_ids: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
+    task_ids: list[str] = field(default_factory=list)
     next_suggestions: list[str] = field(default_factory=list)
 
 

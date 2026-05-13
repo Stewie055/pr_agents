@@ -10,6 +10,7 @@ from semidiag.tools.registry import ToolContext, ToolRegistry, ToolSpec
 
 LogKind = Literal["LT-D", "LT-C", "LT-R"]
 LTScenario = Literal["offline_setup", "online_production"]
+PluginStatus = Literal["ready", "degraded", "error"]
 
 
 class CalibrationPluginManifest(BaseModel):
@@ -32,6 +33,9 @@ class CalibrationPlugin:
     manifest: CalibrationPluginManifest
     tools: list[ToolSpec] = field(default_factory=list)
     skills: list[SkillSpec] = field(default_factory=list)
+    status: PluginStatus = "ready"
+    config_errors: list[str] = field(default_factory=list)
+    implementation_path: str | None = None
 
     def __post_init__(self) -> None:
         if not self.manifest.tool_names:
@@ -70,13 +74,21 @@ class CalibrationPluginRegistry:
     def list_plugins(self) -> list[CalibrationPlugin]:
         return list(self._plugins.values())
 
+    def list_ready_plugins(self) -> list[CalibrationPlugin]:
+        return [plugin for plugin in self.list_plugins() if plugin.status == "ready"]
+
     def list_manifests(self) -> list[CalibrationPluginManifest]:
         return [plugin.manifest for plugin in self.list_plugins()]
+
+    def list_ready_manifests(self) -> list[CalibrationPluginManifest]:
+        return [plugin.manifest for plugin in self.list_ready_plugins()]
 
     def list_skills(self, plugin_ids: list[str] | None = None) -> list[SkillSpec]:
         allowed = set(plugin_ids) if plugin_ids is not None else None
         skills: list[SkillSpec] = []
         for plugin in self.list_plugins():
+            if plugin.status != "ready":
+                continue
             if allowed is not None and plugin.manifest.plugin_id not in allowed:
                 continue
             skills.extend(plugin.skills)
@@ -93,7 +105,7 @@ class ToolScopeBuilder:
         active = ToolRegistry()
         for plugin_id in selected_plugin_ids:
             plugin = self.calibration_registry.get(plugin_id)
-            if plugin is None:
+            if plugin is None or plugin.status != "ready":
                 continue
             plugin_tools = self._plugin_tools(plugin)
             manifest_names = set(plugin.manifest.tool_names)

@@ -20,8 +20,8 @@ Vue/Vite WebUI
 - Business Service 位于 `business/services`，实现解析、清洗、统计、建模、Matplotlib 绘图、规则诊断和 PPT 报告生成。
 - Infrastructure 提供 SQLite、原始文件存储、生成文件存储、未来 ClickHouse、RAG 和任务队列适配。
 - 结构化指标通过 `MetricRepository` 写入，当前默认 SQLite 实现用于本地开发和测试，后续 ClickHouse adapter 应实现同一接口。
-- 长任务通过 `InProcessTaskQueue` 起步，当前提供任务状态 API；后续解析、绘图、PPT 和 Workflow 批处理逐步迁移到任务队列。
-- 业务扩展通过 `business/tools`、`business/plugins` 和 `business/services` 组织。公共工具启动时进入 common registry；测校插件启动时只进入 manifest catalog，被选中后才构建 plugin tools。
+- 长任务通过 `InProcessTaskQueue` 起步，当前提供任务状态 API；图表生成和 PPT 报告生成已作为首批任务型工具接入。
+- 业务扩展通过 `business/tools`、`business/plugins` 和 `business/services` 组织。公共工具启动时进入 common registry；测校插件先通过 `plugin.json` 做 manifest-first discovery，被选中且状态 ready 后才绑定 `plugin.py` 中的 tools。
 
 ## Diagnostic Case
 
@@ -47,7 +47,7 @@ Vue/Vite WebUI
 - 指标定义和派生指标。
 - 规则和阈值。
 - 统计/模型诊断逻辑。
-- Tool 声明。
+- `plugin.json` manifest、Tool 声明和可选 Markdown Skill。
 - Matplotlib 或业务绘图库图表生成器。
 - `ppt-template-sdk` 报告模板。
 - 知识库索引配置。

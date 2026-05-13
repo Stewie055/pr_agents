@@ -85,7 +85,10 @@ export type StreamEvent =
   | { event: "started"; data: { message?: string } }
   | { event: "route"; data: { intent: string; requires_dataset?: boolean; user_goal?: string; reason?: string } }
   | { event: "tool_start"; data: { tool_name: string } }
-  | { event: "tool_result"; data: { tool_name: string; summary: string; error?: string; artifact_ids?: string[]; evidence_ids?: string[] } }
+  | {
+      event: "tool_result";
+      data: { tool_name: string; summary: string; error?: string; artifact_ids?: string[]; evidence_ids?: string[]; task_ids?: string[] };
+    }
   | { event: "artifact_created"; data: { artifact: Artifact } }
   | { event: "message_delta"; data: { delta: string } }
   | { event: "final"; data: { message: AgentMessage; summary: string; artifacts: Artifact[]; tool_traces: ToolTrace[] } }
