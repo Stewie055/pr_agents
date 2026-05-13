@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from semidiag.agent import AgentRuntime
@@ -27,8 +29,6 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
             if line.startswith("data:"):
                 data = line.removeprefix("data:").strip()
         if event and data:
-            import json
-
             events.append((event, json.loads(data)))
     return events
 
@@ -309,12 +309,31 @@ def test_trace_api_returns_debug_data_with_redaction(tmp_path):
             duration_ms=12,
         )
     )
+    state.repository.add_llm_audit_event(
+        LLMAuditEvent(
+            case_id=case.id,
+            provider="openai_compatible",
+            model="mock",
+            request={"messages": [{"role": "user", "content": "stream"}]},
+            response={
+                "stream": True,
+                "chunks": [
+                    {"choices": [{"delta": {"content": "诊断"}, "finish_reason": None}]},
+                    {"choices": [{"delta": {"content": "完成"}, "finish_reason": "stop"}]},
+                ],
+            },
+            duration_ms=14,
+        )
+    )
 
     response = client.get(f"/api/cases/{case.id}/trace")
 
     assert response.status_code == 200
     body = response.json()
     assert body["agent_steps"][0]["phase"] == "observe"
+    assert body["llm_audit_events"][0]["response_summary"]["content"] == "ok"
+    assert body["llm_audit_events"][1]["response_summary"]["content"] == "诊断完成"
+    assert body["llm_audit_events"][1]["response_summary"]["chunk_count"] == 2
     dumped = response.text
     assert "secret-token" not in dumped
     assert "secret-key" not in dumped

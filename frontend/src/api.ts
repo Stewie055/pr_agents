@@ -72,6 +72,14 @@ export type LLMAuditEvent = {
   provider: string;
   model: string;
   request: Record<string, unknown>;
+  response_summary?: {
+    stream?: boolean;
+    chunk_count?: number;
+    finish_reason?: string | null;
+    content?: string;
+    reasoning_content?: string;
+    tool_calls?: Array<{ id?: string; name?: string; arguments?: string }>;
+  } | null;
   response?: Record<string, unknown> | null;
   error?: string | null;
   duration_ms: number;

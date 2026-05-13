@@ -26,9 +26,10 @@
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
 - ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复；同步和流式接口共享同一套 step executor
 - SSE Agent 事件流，实时展示路由、工具调用、产物生成和回复增量
+- 非工具聊天和 ReAct 最终回复均按 LLM delta 实时输出，不等待完整回复生成
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
 - OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积
-- 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、LLM 审计并导出脱敏 JSON
+- 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、聚合后的 LLM 审计摘要并导出脱敏 JSON
 - 通用 CSV 文件分析、绘图、诊断和 PPT 报告插件
 - Matplotlib PNG 图表 Artifact，多图图库、下载和全屏预览
 - PPTX 诊断报告 Artifact，优先使用 `ppt-template-sdk` 模板渲染并支持下载

@@ -26,6 +26,7 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 非流式 `/messages` 接口保留，用于同步调用和回归测试。
 
 同步和流式接口必须共享同一套 ReAct step executor。executor 负责 LLM planning、重复工具检测、参数注入、工具执行、Observation 构造、trace 写入和 stop/finalize；接口层只决定是直接返回结果还是把同一批 step event 转为 SSE。
+流式接口必须在收到 LLM delta 后立即输出 `message_delta`，包括 chat_response、knowledge_qa、clarification、ReAct final answer 和 max-step finalize 场景，不允许先聚合完整回复再一次性发送。
 
 ## Stop Conditions
 
@@ -70,6 +71,7 @@ XML+JSON 解析由独立 parser 负责。缺失动作块、同时出现 `<tool_c
 - 被选中的插件和 Skill 名称。
 
 Trace API 默认统一脱敏密钥和认证头，并截断超长文本。导出接口返回同样脱敏后的 JSON。
+对于 streaming LLM response，Trace 调试台默认展示聚合后的完整回复和完整 tool calls；原始 chunks 保留在 raw request/response 展开区。
 
 ## User-Facing Output
 

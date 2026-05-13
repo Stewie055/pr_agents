@@ -341,6 +341,23 @@ h3 {
   padding: 12px;
 }
 
+.llm-response-summary {
+  background: #f8fafb;
+  border: 1px solid #dce4e7;
+  border-radius: 6px;
+  margin: 10px 0;
+  padding: 10px;
+}
+
+.llm-response-summary p {
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+}
+
+.llm-response-summary small {
+  color: #5f7f88;
+}
+
 .diagnosis-card dl {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

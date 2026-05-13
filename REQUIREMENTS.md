@@ -17,6 +17,7 @@
 - 插件发现必须优先读取 manifest，不执行业务实现代码即可展示插件能力、工具、Skill、配置需求和状态。
 - 绘图、PPT 报告等长耗时 Tool 必须通过任务队列执行，并通过 task id 暴露状态；任务记录必须持久化，服务重启后不得静默丢失运行中任务。
 - 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、任务状态、产物生成和最终回复增量。
+- 聊天、资料问答和 ReAct 最终回复必须实时转发 LLM delta，不允许在后端等待完整模型回复后一次性输出。
 - Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
 - 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
 - 用户可见回复默认不暴露内部 case/dataset/artifact id。
@@ -28,6 +29,7 @@
 - LLM 上下文只发送案例摘要、Artifact 元数据、Evidence 和工具结果摘要，不发送原始文件行级数据。
 - 完整记录 LLM prompt/request/response 审计内容，密钥和认证头不得落库。
 - 系统必须提供独立 Trace 调试能力，能按案例查看路由、ReAct 步骤、工具调用、Observation、LLM 审计、耗时和错误，并支持脱敏导出；主诊断界面默认只展示用户可见信息。
+- Trace 调试台默认展示聚合后的完整 LLM 回复和 tool calls，raw streaming chunks 只作为展开排查内容。
 - 主诊断界面必须固定视口工作区，聊天区和右侧工作台独立滚动，避免长回复撑高整个页面。
 - 业务图表由 Service 层使用 Matplotlib 或业务绘图库生成图片文件，Artifact 必须提供可下载/可预览的文件 URL；前端必须支持多图切换展示。
 - 报告输出以 PPTX 为主，使用仓库内 vendored `ppt_template_sdk` 单文件模板渲染，不依赖私有 Git 仓库；报告 Artifact 必须包含格式、MIME、文件 URL 和结构化章节摘要。

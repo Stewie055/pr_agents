@@ -25,7 +25,8 @@
 ## Remaining Product Gaps
 
 - Runtime convergence：同步和流式 ReAct 仍存在重复执行逻辑，后续工具错误、任务事件和 trace 改动容易漂移。
-- Persistent task UX：任务已能异步执行，但任务记录仍是进程内状态，前端缺少任务列表、轮询、失败展示和产物完成自动刷新。
+- True token streaming：chat_response、knowledge_qa 和 ReAct final-answer 必须边接收 LLM delta 边发送 SSE，不能先聚合再输出。
+- Trace readability：调试台默认展示聚合后的完整 LLM 回复，raw streaming chunks 只作为展开排查内容。
 - Tool/Skill selection：选中插件后还需要按当前问题继续裁剪 tool/skill，避免单插件工具过多。
 - RAG memory maturity：长期记忆仍是关键词检索，需要 embedding/RAG、来源版本和 token budget。
 - Runtime schema validation：Tool input/output schema 还未做运行时校验。
@@ -38,6 +39,7 @@
 2. Async task tools for chart generation and PPT report generation.
 3. ReAct runtime convergence: non-streaming and streaming paths share one step executor.
 4. Persistent task UX: task records are stored in SQLite, exposed by case, and refreshed in the WebUI.
+5. True token streaming and readable LLM trace summaries.
 
 ## Acceptance
 

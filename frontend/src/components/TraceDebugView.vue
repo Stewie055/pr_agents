@@ -18,6 +18,10 @@ const emit = defineEmits<{
 function formatJson(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
+
+function toolCallNames(event: LLMAuditEvent) {
+  return event.response_summary?.tool_calls?.map((item) => item.name || item.id || "tool").join(", ") ?? "";
+}
 </script>
 
 <template>
@@ -61,9 +65,17 @@ function formatJson(value: unknown) {
           <strong>{{ event.provider }} / {{ event.model }}</strong>
           <span>{{ event.duration_ms }} ms</span>
           <p v-if="event.error">{{ event.error }}</p>
+          <section v-else-if="event.response_summary" class="llm-response-summary">
+            <p v-if="event.response_summary.content">{{ event.response_summary.content }}</p>
+            <p v-else-if="event.response_summary.tool_calls?.length">tool calls: {{ toolCallNames(event) }}</p>
+            <small>
+              {{ event.response_summary.stream ? `stream · ${event.response_summary.chunk_count ?? 0} chunks` : "non-stream" }}
+              <template v-if="event.response_summary.finish_reason"> · {{ event.response_summary.finish_reason }}</template>
+            </small>
+          </section>
           <details>
-            <summary>request / response</summary>
-            <pre>{{ formatJson({ request: event.request, response: event.response }) }}</pre>
+            <summary>raw request / response</summary>
+            <pre>{{ formatJson({ request: event.request, response_summary: event.response_summary, response: event.response }) }}</pre>
           </details>
         </article>
         <p v-if="!llmEvents.length" class="empty-trace">暂无 LLM 调用记录。</p>

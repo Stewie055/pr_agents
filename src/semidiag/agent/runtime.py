@@ -249,17 +249,14 @@ class AgentRuntime:
         self._record_route_decision(state)
 
         for step_index in range(1, self.max_steps + 1):
-            output = self._execute_react_step(
+            output = yield from self._execute_react_step_stream(
                 state=state,
                 step_index=step_index,
                 tools=tools,
                 tool_registry=tool_registry,
                 call_counts=call_counts,
-                stream=True,
             )
-            for delta in output.deltas:
-                streamed_final_content += delta
-                yield AgentStreamEvent(event="message_delta", data={"delta": delta})
+            streamed_final_content += "".join(output.deltas)
             yield from output.events
             if output.final_content:
                 final_content = output.final_content
@@ -275,6 +272,57 @@ class AgentRuntime:
             for part in self._split_stream_text(content_out):
                 yield AgentStreamEvent(event="message_delta", data={"delta": part})
         yield self._react_final_event(state=state, content_out=content_out)
+
+    def _execute_react_step_stream(
+        self,
+        *,
+        state: AgentState,
+        step_index: int,
+        tools: list[dict[str, Any]],
+        tool_registry: ToolRegistry,
+        call_counts: dict[str, int],
+    ) -> Iterator[AgentStreamEvent | ReActStepOutput]:
+        state.step_count = step_index
+        started = perf_counter()
+        deltas: list[str] = []
+        result = None
+        try:
+            for chunk in self.llm.plan_tool_calls_stream(messages=state.messages, tools=tools):
+                if chunk.event == "delta" and chunk.delta:
+                    deltas.append(chunk.delta)
+                    yield AgentStreamEvent(
+                        event="message_delta",
+                        data={"delta": self._sanitize_user_visible_text(chunk.delta)},
+                    )
+                elif chunk.event == "result":
+                    result = chunk.result
+        except LLMError as exc:
+            self._record_llm_audit(
+                case_id=state.case_id,
+                request={"messages": state.messages, "tool_specs": tools},
+                error=str(exc),
+            )
+            raise
+        if result is None:
+            raise LLMError("LLM stream ended without a planning result", status_code=502)
+        request_payload = result.metadata.get("request_payload")
+        self._record_llm_audit(
+            case_id=state.case_id,
+            request=request_payload if isinstance(request_payload, dict) else {"messages": state.messages, "tools": tools},
+            response=result.raw_response,
+            duration_ms=int(result.metadata.get("duration_ms", 0)),
+        )
+        duration_ms = int((perf_counter() - started) * 1000)
+        output = self._apply_react_plan_result(
+            state=state,
+            step_index=step_index,
+            result=result,
+            duration_ms=duration_ms,
+            tool_registry=tool_registry,
+            call_counts=call_counts,
+        )
+        output.deltas = deltas
+        return output
 
     def _execute_react_step(
         self,
@@ -294,7 +342,25 @@ class AgentRuntime:
         else:
             result = self._call_llm_for_plan(case_id=state.case_id, messages=state.messages, tools=tools)
         duration_ms = int((perf_counter() - started) * 1000)
+        return self._apply_react_plan_result(
+            state=state,
+            step_index=step_index,
+            result=result,
+            duration_ms=duration_ms,
+            tool_registry=tool_registry,
+            call_counts=call_counts,
+        )
 
+    def _apply_react_plan_result(
+        self,
+        *,
+        state: AgentState,
+        step_index: int,
+        result,
+        duration_ms: int,
+        tool_registry: ToolRegistry,
+        call_counts: dict[str, int],
+    ) -> ReActStepOutput:
         if not result.tool_calls:
             state.stop_reason = "final_answer"
             self._record_agent_step(
@@ -305,7 +371,7 @@ class AgentRuntime:
                 stop_reason=state.stop_reason,
                 duration_ms=duration_ms,
             )
-            return ReActStepOutput(events=[], deltas=deltas, final_content=result.content or "".join(deltas))
+            return ReActStepOutput(events=[], deltas=[], final_content=result.content)
 
         state.messages.append(self.llm.assistant_plan_message(result))
         events: list[AgentStreamEvent] = []
@@ -388,7 +454,7 @@ class AgentRuntime:
             duration_ms=duration_ms,
         )
         state.messages.extend(self.llm.tool_observation_messages(observation_messages))
-        return ReActStepOutput(events=events, deltas=deltas, final_content=final_content)
+        return ReActStepOutput(events=events, deltas=[], final_content=final_content)
 
     def _tool_context(self, state: AgentState) -> ToolContext:
         return ToolContext(
@@ -545,9 +611,7 @@ class AgentRuntime:
                 ),
             }
         )
-        result, deltas = self._call_llm_for_summary_stream(case_id=state.case_id, messages=messages)
-        for delta in deltas:
-            yield AgentStreamEvent(event="message_delta", data={"delta": delta})
+        result = yield from self._stream_llm_summary(case_id=state.case_id, messages=messages)
         self._record_agent_step(
             case_id=state.case_id,
             step_index=state.step_count,
@@ -788,13 +852,8 @@ class AgentRuntime:
         decision: RouteDecision,
     ) -> Iterator[AgentStreamEvent]:
         messages = self._build_non_tool_messages(case_id=case_id, user_content=content, decision=decision)
-        result, deltas = self._call_llm_for_summary_stream(case_id=case_id, messages=messages)
-        clean_parts: list[str] = []
-        for delta in deltas:
-            clean_delta = self._sanitize_user_visible_text(delta)
-            clean_parts.append(clean_delta)
-            yield AgentStreamEvent(event="message_delta", data={"delta": clean_delta})
-        clean_content = self._sanitize_user_visible_text(result.content or "".join(clean_parts) or "我需要更多信息才能继续。")
+        result = yield from self._stream_llm_summary(case_id=case_id, messages=messages)
+        clean_content = self._sanitize_user_visible_text(result.content or "我需要更多信息才能继续。")
         artifacts = self.repository.list_case_artifacts(case_id)
         tool_traces = self.repository.list_case_tool_traces(case_id)
         assistant_message = self.repository.add_message(
@@ -822,6 +881,31 @@ class AgentRuntime:
                 "tool_traces": [trace.model_dump(mode="json") for trace in tool_traces],
             },
         )
+
+    def _stream_llm_summary(self, *, case_id: str, messages: list[dict[str, Any]]) -> Iterator[AgentStreamEvent | Any]:
+        result = None
+        try:
+            for chunk in self.llm.summarize_turn_stream(messages=messages):
+                if chunk.event == "delta" and chunk.delta:
+                    yield AgentStreamEvent(
+                        event="message_delta",
+                        data={"delta": self._sanitize_user_visible_text(chunk.delta)},
+                    )
+                elif chunk.event == "result":
+                    result = chunk.result
+        except LLMError as exc:
+            self._record_llm_audit(case_id=case_id, request={"messages": messages}, error=str(exc))
+            raise
+        if result is None:
+            raise LLMError("LLM stream ended without a summary result", status_code=502)
+        request_payload = result.metadata.get("request_payload")
+        self._record_llm_audit(
+            case_id=case_id,
+            request=request_payload if isinstance(request_payload, dict) else {"messages": messages},
+            response=result.raw_response,
+            duration_ms=int(result.metadata.get("duration_ms", 0)),
+        )
+        return result
 
     def _build_route_context(self, *, case_id: str) -> CaseRouteContext:
         datasets = self.repository.list_case_datasets(case_id)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from semidiag.agent import AgentRuntime
+from semidiag.agent.llm import LLMResult, LLMStreamChunk
 from semidiag.extensions import ExtensionLoader
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
@@ -24,6 +26,22 @@ class CustomEquipmentPlugin(GenericEquipmentPlugin):
         super().__init__()
         self.equipment_type = "custom_semiconductor_tool"
         self.display_name = "Custom semiconductor equipment"
+
+
+class DelayedSummaryLLMProvider(DeterministicLLMProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.summary_finished = False
+
+    def summarize_turn_stream(self, *, messages: list[dict]) -> Iterator[LLMStreamChunk]:
+        first_content = messages[0].get("content", "") if messages else ""
+        if "路由器" in first_content or "插件选择器" in first_content:
+            yield from super().summarize_turn_stream(messages=messages)
+            return
+        yield LLMStreamChunk(event="delta", delta="第一段")
+        yield LLMStreamChunk(event="delta", delta="第二段")
+        self.summary_finished = True
+        yield LLMStreamChunk(event="result", result=LLMResult(content="第一段第二段", metadata=self._metadata()))
 
 
 def load_demo_calibrations() -> CalibrationPluginRegistry:
@@ -205,3 +223,25 @@ def test_sync_and_stream_react_paths_share_tool_behavior(tmp_path):
     assert {artifact.kind for artifact in sync_repository.list_case_artifacts(sync_case.id)} == {
         artifact.kind for artifact in stream_repository.list_case_artifacts(stream_case.id)
     }
+
+
+def test_chat_response_streams_delta_before_llm_result_finishes(tmp_path):
+    repository = SQLiteRepository(tmp_path / "stream-chat.sqlite3")
+    case = repository.create_case("Streaming chat")
+    llm = DelayedSummaryLLMProvider()
+    runtime = AgentRuntime(repository, llm=llm, plugin=GenericEquipmentPlugin())
+
+    stream = runtime.stream_user_message(case_id=case.id, content="你好")
+    events = []
+    for event in stream:
+        events.append(event)
+        if event.event == "message_delta":
+            break
+
+    assert events[-1].data["delta"] == "第一段"
+    assert llm.summary_finished is False
+
+    remaining = list(stream)
+    assert llm.summary_finished is True
+    assert [event.event for event in events + remaining].count("message_delta") == 2
+    assert (events + remaining)[-1].event == "final"

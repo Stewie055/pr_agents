@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,6 +99,79 @@ def redact_trace_value(value):
     return value
 
 
+def summarize_llm_response(response: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(response, dict):
+        return None
+    if response.get("stream") is True:
+        chunks = response.get("chunks")
+        if not isinstance(chunks, list):
+            return {"stream": True, "chunk_count": 0, "content": "", "tool_calls": []}
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_parts: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            choice = (chunk.get("choices") or [{}])[0]
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason") or finish_reason
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            if delta.get("content"):
+                content_parts.append(str(delta["content"]))
+            if delta.get("reasoning_content"):
+                reasoning_parts.append(str(delta["reasoning_content"]))
+            for item in delta.get("tool_calls") or []:
+                if not isinstance(item, dict):
+                    continue
+                index = int(item.get("index", len(tool_parts)))
+                existing = tool_parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                if item.get("id"):
+                    existing["id"] += str(item["id"])
+                function = item.get("function") or {}
+                if isinstance(function, dict):
+                    if function.get("name"):
+                        existing["name"] += str(function["name"])
+                    if function.get("arguments"):
+                        existing["arguments"] += str(function["arguments"])
+        return {
+            "stream": True,
+            "chunk_count": len(chunks),
+            "finish_reason": finish_reason,
+            "content": "".join(content_parts),
+            "reasoning_content": "".join(reasoning_parts),
+            "tool_calls": [tool_parts[index] for index in sorted(tool_parts)],
+        }
+
+    message = (((response.get("choices") or [{}])[0] or {}).get("message") or {})
+    if not isinstance(message, dict):
+        return {"stream": False, "content": "", "tool_calls": []}
+    tool_calls = []
+    for item in message.get("tool_calls") or []:
+        if not isinstance(item, dict):
+            continue
+        function = item.get("function") or {}
+        if not isinstance(function, dict):
+            continue
+        tool_calls.append(
+            {
+                "id": item.get("id") or "",
+                "name": function.get("name") or "",
+                "arguments": function.get("arguments") or "",
+            }
+        )
+    return {
+        "stream": False,
+        "finish_reason": ((response.get("choices") or [{}])[0] or {}).get("finish_reason"),
+        "content": message.get("content") or "",
+        "reasoning_content": message.get("reasoning_content") or "",
+        "tool_calls": tool_calls,
+    }
+
+
 def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
     case = repository.get_case(case_id)
     if case is None:
@@ -106,6 +180,7 @@ def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
     for event in repository.list_case_llm_audit_events(case_id):
         payload = event.model_dump(mode="json")
         payload["request"] = redact_trace_value(payload.get("request") or {})
+        payload["response_summary"] = redact_trace_value(summarize_llm_response(payload.get("response")))
         payload["response"] = redact_trace_value(payload.get("response")) if payload.get("response") is not None else None
         llm_events.append(payload)
     return redact_trace_value({
@@ -410,7 +485,11 @@ def create_app(state: AppState | None = None) -> FastAPI:
             except Exception as exc:
                 yield sse_event("error", {"detail": str(exc), "status_code": 500})
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     return app
 

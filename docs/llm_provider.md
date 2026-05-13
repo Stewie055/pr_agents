@@ -94,7 +94,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 `LLMProvider` 同时提供同步和流式接口：
 
 - `plan_tool_calls_stream`: 使用 `stream=true` 获取模型输出，native 模式会累积 tool-call delta 后返回完整 `LLMToolCall`。
-- `summarize_turn_stream`: 将文本 delta 作为 `message_delta` 上游事件实时输出。
+- `summarize_turn_stream`: 将文本 delta 作为 `message_delta` 上游事件实时输出；Runtime 不应等完整结果返回后再批量转发。
 - `prompt_xml_json` 模式会先累积 XML 文本，完整解析 `<tool_calls>` 或 `<final_answer>` 后再执行工具，避免未校验协议片段进入工具链。
 - 自动化测试的 fake provider 提供同步和伪流式输出，保证测试稳定，不进入生产运行时。
 
@@ -132,6 +132,7 @@ LLM prompt、request 和 response 会完整记录到 `llm_audit_events`。
 - 后续接入用户权限后，LLM audit 应纳入案例审计视图。
 
 独立 WebUI Trace 调试台通过 `/api/cases/{case_id}/trace` 查看脱敏后的消息、AgentStepTrace、ToolCallTrace 和 LLMAuditEvent，并通过 `/api/cases/{case_id}/trace/export` 导出 JSON。主诊断界面默认不加载 trace。
+Streaming raw response 会在 trace 中聚合为 `response_summary`，调试台默认展示完整回复或完整 tool calls，raw chunks 仅用于展开排查。
 
 ## Testing
 

@@ -263,7 +263,16 @@ describe("App", () => {
           evidence: [],
           tool_traces: [],
           agent_steps: [{ id: "step_1", step_index: 1, phase: "observe", duration_ms: 8 }],
-          llm_audit_events: [{ id: "llm_1", provider: "openai_compatible", model: "mock", request: {}, response: {}, duration_ms: 8, created_at: "now" }]
+          llm_audit_events: [{
+            id: "llm_1",
+            provider: "openai_compatible",
+            model: "mock",
+            request: {},
+            response_summary: { stream: true, chunk_count: 2, content: "完整回复", tool_calls: [] },
+            response: { stream: true, chunks: [{ choices: [{ delta: { content: "完整" } }] }] },
+            duration_ms: 8,
+            created_at: "now"
+          }]
         }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -278,5 +287,7 @@ describe("App", () => {
     expect(wrapper.text()).toContain("Agent 调试台");
     expect(wrapper.text()).toContain("1 · observe");
     expect(wrapper.text()).toContain("openai_compatible / mock");
+    expect(wrapper.text()).toContain("完整回复");
+    expect(wrapper.text()).toContain("stream · 2 chunks");
   });
 });
