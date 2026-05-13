@@ -10,7 +10,7 @@
 - Plugin status/config validation：`requires_config` 缺失时标记 degraded，并阻止工具进入 active registry。
 - Skill selection：按用户问题、日志类型、场景和 triggers 选择 Skill，避免选中插件后注入全部 Skill。
 - Plugin/tool guardrails：支持插件级和工具级自定义 guardrail。
-- Async task tools：解析、绘图、PPT、重分析等长耗时工具通过任务队列执行。
+- Async task tools：解析、绘图、PPT、重分析等长耗时工具通过任务队列执行；Runtime 持久化 continuation，任务完成后把结果回注为 observation 并续跑 Agent。
 - Tool selection：在插件被选中后继续裁剪工具，避免单插件工具过多。
 - Router/selector repair：LLM JSON 解析失败时执行一次修复重试，并加入低置信度澄清。
 - Runtime convergence：同步和流式 ReAct 共享同一个 step executor，避免行为漂移。
@@ -51,3 +51,4 @@
 - 同步和流式 Agent 对同一工具链路产生一致的 tool trace、artifact 和 final message metadata。
 - 服务重启后 pending/running task 被标记为 interrupted/failed，不静默丢失。
 - 前端能展示当前案例任务状态，任务完成后自动刷新图表/PPT。
+- Runtime 能在任务终态后自动恢复 waiting continuation，并继续 ReAct 直到最终回复或下一次异步任务边界。

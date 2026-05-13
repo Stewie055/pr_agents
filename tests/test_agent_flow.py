@@ -51,8 +51,22 @@ def load_demo_calibrations() -> CalibrationPluginRegistry:
 
 
 def wait_for_tasks(runtime: AgentRuntime) -> None:
-    for task in runtime.task_queue.list_tasks():
-        runtime.task_queue.wait(task.id, timeout=30)
+    seen: set[str] = set()
+    while True:
+        tasks = runtime.task_queue.list_tasks()
+        pending = [task for task in tasks if task.id not in seen and task.status in {"pending", "running"}]
+        if not pending:
+            runtime.resume_ready_continuations()
+            remaining = [
+                task for task in runtime.task_queue.list_tasks() if task.id not in seen and task.status in {"pending", "running"}
+            ]
+            if not remaining:
+                break
+            pending = remaining
+        for task in pending:
+            runtime.task_queue.wait(task.id, timeout=30)
+            seen.add(task.id)
+        runtime.resume_ready_continuations()
 
 
 def test_agent_runs_diagnostic_tool_loop(tmp_path):
@@ -81,14 +95,23 @@ def test_agent_runs_diagnostic_tool_loop(tmp_path):
         dataset_id=dataset.id,
     )
 
-    assert "辅助诊断" in result.message.content
+    assert "后台任务" in result.message.content
     assert {trace.tool_name for trace in result.tool_traces} >= {
+        "parse_dataset",
+        "profile_dataset",
+        "build_trend_chart",
+    }
+    assert repository.list_case_agent_continuations(case.id)[0].status == "waiting_task"
+    wait_for_tasks(runtime)
+    final_messages = [message for message in repository.list_case_messages(case.id) if message.role == "assistant"]
+    assert "辅助诊断" in final_messages[-1].content
+    assert repository.list_case_agent_continuations(case.id)[0].status == "completed"
+    assert {trace.tool_name for trace in repository.list_case_tool_traces(case.id)} >= {
         "parse_dataset",
         "profile_dataset",
         "build_trend_chart",
         "diagnose_performance",
     }
-    wait_for_tasks(runtime)
     artifacts = repository.list_case_artifacts(case.id)
     assert {artifact.kind for artifact in artifacts} >= {"dataset", "table", "chart", "diagnosis"}
     charts = [artifact for artifact in artifacts if artifact.kind == "chart" and artifact.data.get("render_type") == "image"]

@@ -34,7 +34,7 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 - 达到 `max_steps=6`。
 - 同一工具调用重复超过阈值。
 - LLM 请求失败或返回未知工具。
-- 工具提交异步任务后，当前 step 以 `tool_result.task_ids` 进入 Observation；任务完成由任务 API 和前端轮询刷新体现。
+- 工具提交异步任务后，当前 step 以 `tool_result.task_ids` 进入 Observation，Runtime 持久化 continuation 并暂停本轮 ReAct；任务完成后 Runtime 构造 `<task_observation>` 重新喂给 LLM 继续规划或生成最终回复，LLM 不负责轮询 pending/running 状态。
 
 ## Observation Contract
 
@@ -53,6 +53,7 @@ DeepSeek V4 thinking mode 会在 tool-call 轮次返回 `reasoning_content`。�
 - `<available_tools>`: 每轮由 ToolRegistry 动态生成工具清单。
 - `<tool_calls>`: Runtime 解析块内 JSON 数组后执行白名单工具。
 - `<observation>`: Runtime 将工具结果回灌给模型。
+- `<task_observation>`: Runtime 将异步任务终态结果回灌给模型。
 - `<final_answer>`: Runtime 停止 ReAct loop 并清洗最终回复。
 
 Runtime 的工具执行、Observation、重复调用保护和 max step 策略与 native 模式一致。
@@ -66,7 +67,7 @@ XML+JSON 解析由独立 parser 负责。缺失动作块、同时出现 `<tool_c
 
 - 路由和 stop reason。
 - LLM audit request/response、provider、model、tool mode、耗时和错误。
-- ToolCallTrace 和结构化 Observation。
+- ToolCallTrace、AgentContinuation 和结构化 Observation。
 - Artifact/Evidence 摘要。
 - 被选中的插件和 Skill 名称。
 

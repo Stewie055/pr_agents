@@ -1,6 +1,7 @@
 """Domain model exports."""
 
 from semidiag.domain.models import (
+    AgentContinuation,
     AgentMessage,
     AgentStepTrace,
     AnalysisArtifact,
@@ -19,6 +20,7 @@ from semidiag.domain.models import (
 
 __all__ = [
     "AgentMessage",
+    "AgentContinuation",
     "AgentStepTrace",
     "AnalysisArtifact",
     "AuditEvent",

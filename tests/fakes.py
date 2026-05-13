@@ -58,6 +58,17 @@ class DeterministicLLMProvider:
         yield LLMStreamChunk(event="result", result=result)
 
     def plan_tool_calls(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+        if self._has_task_observation(messages):
+            remaining = self._remaining_after_task(messages, tools)
+            if remaining:
+                return LLMResult(
+                    tool_calls=[
+                        LLMToolCall(id=f"fake_resume_{index}", name=name, arguments={})
+                        for index, name in enumerate(remaining, start=1)
+                    ],
+                    metadata=self._metadata(),
+                )
+            return LLMResult(content=self._final_answer(messages), metadata=self._metadata())
         if any(item.get("role") == "tool" for item in messages):
             return LLMResult(content=self._final_answer(messages), metadata=self._metadata())
         self.plan_round += 1
@@ -141,6 +152,32 @@ class DeterministicLLMProvider:
 
     def _tool_names(self, tools: list[dict[str, Any]]) -> set[str]:
         return {tool.get("function", {}).get("name", "") for tool in tools}
+
+    def _has_task_observation(self, messages: list[dict[str, Any]]) -> bool:
+        return any("<task_observation" in str(item.get("content", "")) for item in messages)
+
+    def _remaining_after_task(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> list[str]:
+        content = "\n".join(str(item.get("content", "")) for item in messages)
+        available = self._tool_names(tools)
+        executed = self._executed_tool_names(messages)
+        wants_report = "报告" in content or "report_generation" in content
+        if "diagnose_performance" not in executed and "diagnose_performance" in available:
+            return ["diagnose_performance"]
+        if wants_report and "generate_report" not in executed and "generate_report" in available:
+            return ["generate_report"]
+        return []
+
+    def _executed_tool_names(self, messages: list[dict[str, Any]]) -> set[str]:
+        names: set[str] = set()
+        for message in messages:
+            for item in message.get("tool_calls") or []:
+                function = item.get("function") or {}
+                if function.get("name"):
+                    names.add(str(function["name"]))
+            content = str(message.get("content", ""))
+            if "previous_tool_calls_already_executed" in content:
+                names.update(re.findall(r'"name":\s*"([^"]+)"', content))
+        return names
 
     def _final_answer(self, messages: list[dict[str, Any]]) -> str:
         tool_messages = [item.get("content", "") for item in messages if item.get("role") == "tool"]

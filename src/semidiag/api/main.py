@@ -187,6 +187,9 @@ def build_case_trace(case_id: str, repository: SQLiteRepository) -> dict:
         "case": case.model_dump(mode="json"),
         "messages": [item.model_dump(mode="json") for item in repository.list_case_messages(case_id)],
         "agent_steps": [item.model_dump(mode="json") for item in repository.list_case_agent_step_traces(case_id)],
+        "agent_continuations": [
+            item.model_dump(mode="json") for item in repository.list_case_agent_continuations(case_id)
+        ],
         "tool_traces": [item.model_dump(mode="json") for item in repository.list_case_tool_traces(case_id)],
         "llm_audit_events": llm_events,
         "artifacts": [
@@ -228,6 +231,14 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     def sse_event(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def refresh_agent_continuations(current: AppState, case_id: str | None = None) -> None:
+        try:
+            current.agent.resume_ready_continuations(case_id=case_id)
+        except Exception:
+            # Continuation failures are persisted by AgentRuntime; read APIs should
+            # still return the latest task and case state for debugging.
+            return
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -272,6 +283,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     @app.get("/api/tasks")
     def list_tasks(case_id: str | None = None, current=Depends(get_state)):
+        refresh_agent_continuations(current, case_id)
         return {"tasks": [task.model_dump(mode="json") for task in current.task_queue.list_tasks(case_id=case_id)]}
 
     @app.get("/api/tasks/{task_id}")
@@ -279,6 +291,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
         task = current.task_queue.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
+        if task.case_id:
+            refresh_agent_continuations(current, task.case_id)
+            task = current.task_queue.get(task_id) or task
         return task
 
     @app.post("/api/tasks/{task_id}/cancel")
@@ -381,6 +396,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     @app.get("/api/cases/{case_id}")
     def get_case(case_id: str, current=Depends(get_state)):
+        refresh_agent_continuations(current, case_id)
         try:
             return current.repository.case_snapshot(case_id)
         except KeyError as exc:
@@ -388,6 +404,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     @app.get("/api/cases/{case_id}/trace")
     def get_case_trace(case_id: str, current=Depends(get_state)):
+        refresh_agent_continuations(current, case_id)
         try:
             return build_case_trace(case_id, current.repository)
         except KeyError as exc:

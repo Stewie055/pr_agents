@@ -60,6 +60,22 @@ function toolCallNames(event: LLMAuditEvent) {
       </section>
 
       <section class="debug-panel">
+        <h2>Continuations</h2>
+        <ol v-if="trace?.agent_continuations?.length" class="trace-timeline">
+          <li v-for="item in trace.agent_continuations" :key="item.id">
+            <strong>{{ item.status }} · step {{ item.step_count }}</strong>
+            <span>{{ item.pending_task_ids.length }} task(s)</span>
+            <p v-if="item.error">{{ item.error }}</p>
+            <details>
+              <summary>查看 continuation JSON</summary>
+              <pre>{{ formatJson(item) }}</pre>
+            </details>
+          </li>
+        </ol>
+        <p v-else class="empty-trace">暂无 continuation。</p>
+      </section>
+
+      <section class="debug-panel">
         <h2>LLM Audit</h2>
         <article v-for="event in llmEvents" :key="event.id" class="llm-event">
           <strong>{{ event.provider }} / {{ event.model }}</strong>

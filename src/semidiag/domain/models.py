@@ -142,6 +142,26 @@ class AgentStepTrace(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class AgentContinuation(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("cont"))
+    case_id: str
+    status: Literal["waiting_task", "running", "completed", "failed"] = "waiting_task"
+    actor: str = "engineer"
+    user_content: str
+    active_dataset_id: str | None = None
+    decision: dict[str, Any] = Field(default_factory=dict)
+    selected_plugin_ids: list[str] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    pending_task_ids: list[str] = Field(default_factory=list)
+    step_count: int = 0
+    result_message_id: str | None = None
+    error: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+
+
 class AuditEvent(BaseModel):
     id: str = Field(default_factory=lambda: new_id("audit"))
     case_id: str

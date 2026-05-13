@@ -10,7 +10,16 @@ from typing import Any
 from semidiag.agent.llm import LLMError, LLMProvider
 from semidiag.agent.memory import MemoryService
 from semidiag.agent.router import CaseRouteContext, LLMRouter, RouteDecision, StateGate
-from semidiag.domain import AgentMessage, AgentStepTrace, AnalysisArtifact, LLMAuditEvent, ToolCallTrace
+from semidiag.domain import (
+    AgentContinuation,
+    AgentMessage,
+    AgentStepTrace,
+    AnalysisArtifact,
+    AuditEvent,
+    LLMAuditEvent,
+    ToolCallTrace,
+)
+from semidiag.domain.models import utc_now
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.infrastructure.tasks import InProcessTaskQueue
@@ -211,15 +220,22 @@ class AgentRuntime:
             )
         )
 
-    def _run_react_loop(self, state: AgentState) -> AgentTurnResult:
+    def _run_react_loop(
+        self,
+        state: AgentState,
+        *,
+        start_step: int = 1,
+        record_route: bool = True,
+    ) -> AgentTurnResult:
         tool_registry = state.tool_registry or self.registry
         tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
 
-        self._record_route_decision(state)
+        if record_route:
+            self._record_route_decision(state)
 
-        for step_index in range(1, self.max_steps + 1):
+        for step_index in range(start_step, self.max_steps + 1):
             output = self._execute_react_step(
                 state=state,
                 step_index=step_index,
@@ -239,16 +255,23 @@ class AgentRuntime:
         content_out = self._sanitize_user_visible_text(final_content)
         return self._persist_react_result(state=state, content_out=content_out)
 
-    def _run_react_loop_stream(self, state: AgentState) -> Iterator[AgentStreamEvent]:
+    def _run_react_loop_stream(
+        self,
+        state: AgentState,
+        *,
+        start_step: int = 1,
+        record_route: bool = True,
+    ) -> Iterator[AgentStreamEvent]:
         tool_registry = state.tool_registry or self.registry
         tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
         final_content: str | None = None
         streamed_final_content = ""
 
-        self._record_route_decision(state)
+        if record_route:
+            self._record_route_decision(state)
 
-        for step_index in range(1, self.max_steps + 1):
+        for step_index in range(start_step, self.max_steps + 1):
             output = yield from self._execute_react_step_stream(
                 state=state,
                 step_index=step_index,
@@ -373,10 +396,10 @@ class AgentRuntime:
             )
             return ReActStepOutput(events=[], deltas=[], final_content=result.content)
 
-        state.messages.append(self.llm.assistant_plan_message(result))
         events: list[AgentStreamEvent] = []
         tool_observations: list[dict[str, Any]] = []
         observation_messages: list[dict[str, Any]] = []
+        executed_calls = []
         final_content: str | None = None
         context = self._tool_context(state)
 
@@ -391,6 +414,7 @@ class AgentRuntime:
                 break
 
             arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
+            executed_calls.append(call)
             events.append(AgentStreamEvent(event="tool_start", data={"tool_name": call.name}))
             try:
                 tool_result = tool_registry.run(call.name, context, arguments)
@@ -442,18 +466,32 @@ class AgentRuntime:
             tool_observations.append(observation)
             state.observations.append(observation)
             observation_messages.append({"tool_call_id": call.id, "tool_name": call.name, "observation": observation})
+            if observation.get("task_ids"):
+                state.stop_reason = "waiting_task"
+                break
 
         self._record_agent_step(
             case_id=state.case_id,
             step_index=step_index,
             phase="observe",
-            tool_calls=[{"id": call.id, "name": call.name, "arguments": call.arguments} for call in result.tool_calls],
+            tool_calls=[{"id": call.id, "name": call.name, "arguments": call.arguments} for call in executed_calls],
             observations=tool_observations,
             llm_metadata=self._step_llm_metadata(result.metadata),
             stop_reason=state.stop_reason,
             duration_ms=duration_ms,
         )
+        if executed_calls:
+            executed_result = result.model_copy(update={"tool_calls": executed_calls})
+            state.messages.append(self.llm.assistant_plan_message(executed_result))
         state.messages.extend(self.llm.tool_observation_messages(observation_messages))
+        if state.stop_reason == "waiting_task":
+            task_ids = [
+                str(task_id)
+                for observation in tool_observations
+                for task_id in observation.get("task_ids", [])
+            ]
+            self._create_task_continuation(state=state, pending_task_ids=task_ids)
+            final_content = self._task_waiting_message(task_ids=task_ids)
         return ReActStepOutput(events=events, deltas=[], final_content=final_content)
 
     def _tool_context(self, state: AgentState) -> ToolContext:
@@ -517,6 +555,14 @@ class AgentRuntime:
     def _repeated_tool_call_message(self) -> str:
         return "我检测到模型在重复调用同一个工具，已停止继续执行。目前已有的分析结果如下，请根据工具轨迹和证据先进行判断。"
 
+    def _task_waiting_message(self, *, task_ids: list[str]) -> str:
+        task_count = len(task_ids)
+        suffix = "任务" if task_count <= 1 else f"{task_count} 个任务"
+        return (
+            f"已提交后台{suffix}，正在处理。"
+            "任务完成后我会把结果作为新的 observation 继续分析；右侧工作台会刷新任务状态和生成的产物。"
+        )
+
     def _persist_react_result(self, *, state: AgentState, content_out: str) -> AgentTurnResult:
         artifacts = self.repository.list_case_artifacts(state.case_id)
         tool_traces = self.repository.list_case_tool_traces(state.case_id)
@@ -572,6 +618,135 @@ class AgentRuntime:
             "evidence_ids": tool_result.evidence_ids or [evidence.id for evidence in tool_result.evidence],
             "task_ids": tool_result.task_ids,
             "next_suggestions": tool_result.next_suggestions,
+        }
+
+    def _create_task_continuation(self, *, state: AgentState, pending_task_ids: list[str]) -> AgentContinuation:
+        continuation = AgentContinuation(
+            case_id=state.case_id,
+            actor=state.actor,
+            user_content=state.user_content,
+            active_dataset_id=state.active_dataset_id,
+            decision=state.decision.model_dump(mode="json"),
+            selected_plugin_ids=list(state.selected_plugins.plugin_ids) if state.selected_plugins else [],
+            messages=state.messages,
+            observations=state.observations,
+            pending_task_ids=pending_task_ids,
+            step_count=state.step_count,
+        )
+        self.repository.upsert_agent_continuation(continuation)
+        self.repository.add_audit_event(
+            AuditEvent(
+                case_id=state.case_id,
+                actor=state.actor,
+                action="agent.continuation.waiting_task",
+                details={"continuation_id": continuation.id, "task_ids": pending_task_ids},
+            )
+        )
+        return continuation
+
+    def resume_ready_continuations(self, *, case_id: str | None = None) -> list[AgentTurnResult]:
+        results: list[AgentTurnResult] = []
+        for continuation in self.repository.list_waiting_agent_continuations(case_id):
+            tasks = [self.task_queue.get(task_id) for task_id in continuation.pending_task_ids]
+            if not tasks or any(task is None for task in tasks):
+                continue
+            if any(task.status in {"pending", "running"} for task in tasks if task is not None):
+                continue
+            results.append(self._resume_task_continuation(continuation))
+        return results
+
+    def _resume_task_continuation(self, continuation: AgentContinuation) -> AgentTurnResult:
+        continuation.status = "running"
+        continuation.updated_at = utc_now()
+        self.repository.upsert_agent_continuation(continuation)
+        try:
+            state = self._state_from_continuation(continuation)
+            task_observation = self._task_completion_observation(continuation)
+            state.observations.append(task_observation)
+            state.messages.append(self._task_completion_message(task_observation))
+            result = self._run_react_loop(
+                state,
+                start_step=min(continuation.step_count + 1, self.max_steps),
+                record_route=False,
+            )
+        except Exception as exc:
+            continuation.status = "failed"
+            continuation.error = str(exc)
+            continuation.updated_at = utc_now()
+            continuation.completed_at = continuation.updated_at
+            self.repository.upsert_agent_continuation(continuation)
+            raise
+        continuation.status = "completed"
+        continuation.result_message_id = result.message.id
+        continuation.updated_at = utc_now()
+        continuation.completed_at = continuation.updated_at
+        self.repository.upsert_agent_continuation(continuation)
+        self.repository.add_audit_event(
+            AuditEvent(
+                case_id=continuation.case_id,
+                actor=continuation.actor,
+                action="agent.continuation.completed",
+                details={"continuation_id": continuation.id, "message_id": result.message.id},
+            )
+        )
+        return result
+
+    def _state_from_continuation(self, continuation: AgentContinuation) -> AgentState:
+        decision = RouteDecision.model_validate(continuation.decision)
+        selection = CalibrationSelection(plugin_ids=list(continuation.selected_plugin_ids))
+        return AgentState(
+            case_id=continuation.case_id,
+            user_content=continuation.user_content,
+            active_dataset_id=continuation.active_dataset_id,
+            decision=decision,
+            actor=continuation.actor,
+            messages=list(continuation.messages),
+            observations=list(continuation.observations),
+            tool_registry=self._build_active_tool_registry(
+                case_id=continuation.case_id,
+                actor=continuation.actor,
+                selection=selection,
+            ),
+            selected_plugins=selection,
+            step_count=continuation.step_count,
+        )
+
+    def _task_completion_observation(self, continuation: AgentContinuation) -> dict[str, Any]:
+        task_payloads = []
+        for task_id in continuation.pending_task_ids:
+            task = self.task_queue.get(task_id)
+            if task is None:
+                continue
+            task_payloads.append(
+                {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status,
+                    "result": task.result,
+                    "error": task.error,
+                    "artifact_ids": task.artifact_ids,
+                    "evidence_ids": task.evidence_ids,
+                    "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+                }
+            )
+        return {
+            "tool_name": "runtime.task_continuation",
+            "summary": "后台任务已结束，Runtime 将任务终态结果作为 observation 继续推理。",
+            "data": {"tasks": task_payloads},
+            "artifact_ids": [artifact_id for task in task_payloads for artifact_id in task.get("artifact_ids", [])],
+            "evidence_ids": [evidence_id for task in task_payloads for evidence_id in task.get("evidence_ids", [])],
+            "task_ids": [task["id"] for task in task_payloads],
+            "next_suggestions": [],
+        }
+
+    def _task_completion_message(self, observation: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "role": "user",
+            "content": (
+                "<task_observation source=\"agent_runtime\">\n"
+                f"{json.dumps(observation, ensure_ascii=False)}\n"
+                "</task_observation>"
+            ),
         }
 
     def _finalize_from_observations(self, state: AgentState) -> str:

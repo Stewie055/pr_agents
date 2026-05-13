@@ -51,7 +51,7 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 
 `dataset_id` 这类系统参数应放入 `system_injected_args`。Runtime 会自动注入，LLM 可见 schema 会隐藏这些字段，用户也不需要手动提供内部 ID。
 如果模型或用户传入未声明为系统注入的 `dataset_id`，Tool 调用会被 guardrail 拦截并记录错误 trace。
-任务型 Tool 应返回 `task_ids` 并把任务状态写入 `data`。任务 handler 完成后负责落库 Artifact/Evidence。
+任务型 Tool 应返回 `task_ids` 并把任务状态写入 `data`。任务 handler 完成后负责落库 Artifact/Evidence，并在 TaskRecord.result 中写入生成的 `artifact_ids`、`evidence_ids` 和必要摘要。Runtime 会持久化 continuation 并在任务终态后把 TaskRecord 结果作为 observation 续跑 Agent。
 
 ## ToolResult Observation Payload
 

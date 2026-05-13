@@ -67,6 +67,19 @@ export type AgentStep = {
   duration_ms?: number;
 };
 
+export type AgentContinuation = {
+  id: string;
+  case_id: string;
+  status: "waiting_task" | "running" | "completed" | "failed";
+  pending_task_ids: string[];
+  step_count: number;
+  result_message_id?: string | null;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+};
+
 export type LLMAuditEvent = {
   id: string;
   provider: string;
@@ -90,6 +103,7 @@ export type CaseTrace = {
   case: DiagnosticCase;
   messages: AgentMessage[];
   agent_steps: AgentStep[];
+  agent_continuations?: AgentContinuation[];
   tool_traces: ToolTrace[];
   llm_audit_events: LLMAuditEvent[];
   artifacts: Array<{ id: string; kind: string; title: string; summary: string; created_at: string }>;
@@ -105,6 +119,7 @@ export type CaseSnapshot = {
   tasks?: TaskRecord[];
   tool_traces: ToolTrace[];
   agent_steps?: AgentStep[];
+  agent_continuations?: AgentContinuation[];
 };
 
 export type StreamEvent =

@@ -108,7 +108,7 @@ bash scripts/check.sh
 - `POST /api/tasks/{task_id}/cancel`
 
 当前通用 CSV 插件中的图表生成和 PPT 报告生成已经通过任务队列执行。
-前端工作台会展示当前案例任务，轮询刷新运行中任务，并在任务终态后刷新图表和 PPT 产物。
+前端工作台会展示当前案例任务，轮询刷新运行中任务，并在任务终态后刷新图表和 PPT 产物。Runtime 会持久化等待任务的 Agent continuation，并在任务终态后把 TaskRecord.result、artifact_ids 和 evidence_ids 作为 observation 续跑 Agent。
 
 ## Knowledge
 

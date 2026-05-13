@@ -200,7 +200,7 @@ Guardrail 失败会写入 ToolCallTrace error，并作为 error observation 回�
 
 ## Async Tool Tasks
 
-长耗时 Tool 应提交任务而不是阻塞请求线程。任务型 Tool 返回 `ToolResult(task_ids=[...], data={"task_id": ..., "task_status": ...})`，后台任务完成后自行写入 Artifact/Evidence，并把生成的 `artifact_ids`/`evidence_ids` 放进任务结果，方便前端刷新产物。
+长耗时 Tool 应提交任务而不是阻塞请求线程。任务型 Tool 返回 `ToolResult(task_ids=[...], data={"task_id": ..., "task_status": ...})`，后台任务完成后自行写入 Artifact/Evidence，并把生成的 `artifact_ids`/`evidence_ids` 放进任务结果。Runtime 会持久化等待中的 Agent continuation；任务终态后，Runtime 把任务结果作为 observation 回灌给 LLM 继续规划，LLM 不需要也不应该轮询任务状态。
 
 当前通用 CSV 插件已将 `build_trend_chart` 和 `generate_report` 改为任务型工具。任务状态 API：
 

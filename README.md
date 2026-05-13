@@ -18,7 +18,7 @@
 - Manifest-first plugin discovery：通过 `plugin.json` 发现插件能力、配置需求、工具和 Skill
 - Plugin Markdown Skills：被选中插件的业务分析指导按需进入 ReAct prompt
 - Tool Guardrails：统一拦截跨案例数据、手填内部 dataset id 和缺少结构化输出的工具结果
-- 异步任务型工具：图表生成和 PPT 报告生成通过任务队列执行，前端可跟踪任务状态并自动刷新产物
+- 异步任务型工具：图表生成和 PPT 报告生成通过任务队列执行，Runtime 持久化 continuation、轮询任务终态，并把任务结果作为 observation 续跑 Agent
 - OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要
@@ -29,7 +29,7 @@
 - 非工具聊天和 ReAct 最终回复均按 LLM delta 实时输出，不等待完整回复生成
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
 - OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积；前端对 assistant 临时消息按 delta 做响应式更新，避免等 final 事件一次性刷新
-- 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、聚合后的 LLM 审计摘要并导出脱敏 JSON
+- 独立 Trace 调试台，可查看 ReAct 步骤、异步 continuation、工具轨迹、聚合后的 LLM 审计摘要并导出脱敏 JSON
 - 通用 CSV 文件分析、绘图、诊断和 PPT 报告插件
 - Matplotlib PNG 图表 Artifact，多图图库、下载和全屏预览
 - PPTX 诊断报告 Artifact，优先使用 `ppt-template-sdk` 模板渲染并支持下载

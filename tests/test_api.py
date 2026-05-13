@@ -34,8 +34,24 @@ def parse_sse_events(payload: str) -> list[tuple[str, dict]]:
 
 
 def wait_for_tasks(state: AppState) -> None:
-    for task in state.task_queue.list_tasks():
-        state.task_queue.wait(task.id, timeout=30)
+    seen: set[str] = set()
+    while True:
+        pending = [
+            task for task in state.task_queue.list_tasks() if task.id not in seen and task.status in {"pending", "running"}
+        ]
+        if not pending:
+            state.agent.resume_ready_continuations()
+            pending = [
+                task
+                for task in state.task_queue.list_tasks()
+                if task.id not in seen and task.status in {"pending", "running"}
+            ]
+            if not pending:
+                break
+        for task in pending:
+            state.task_queue.wait(task.id, timeout=30)
+            seen.add(task.id)
+        state.agent.resume_ready_continuations()
 
 
 def test_api_case_upload_and_agent_message(tmp_path):
@@ -70,11 +86,12 @@ def test_api_case_upload_and_agent_message(tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["message"]["role"] == "assistant"
-    assert any(item["kind"] == "diagnosis" for item in body["artifacts"])
+    assert "后台任务" in body["summary"]
     wait_for_tasks(state)
     snapshot = client.get(f"/api/cases/{case_id}").json()
+    assert any(item["kind"] == "diagnosis" for item in snapshot["artifacts"])
     assert any(item["kind"] == "chart" and item["data"]["render_type"] == "image" for item in snapshot["artifacts"])
-    assert any(trace["tool_name"] == "diagnose_performance" for trace in body["tool_traces"])
+    assert any(trace["tool_name"] == "diagnose_performance" for trace in snapshot["tool_traces"])
     assert len(state.metric_repository.list_dataset_points(dataset_id)) == 20
 
     chart = next(item for item in snapshot["artifacts"] if item["kind"] == "chart" and item["data"]["render_type"] == "image")
@@ -156,7 +173,47 @@ def test_api_streams_agent_events(tmp_path):
     assert names[-1] == "final"
     final = events[-1][1]
     assert final["message"]["role"] == "assistant"
-    assert any(item["kind"] == "diagnosis" for item in final["artifacts"])
+    assert "后台任务" in final["summary"]
+    assert any(data.get("task_ids") for event, data in events if event == "tool_result")
+    wait_for_tasks(state)
+    snapshot = client.get(f"/api/cases/{case_id}").json()
+    assert any(item["kind"] == "diagnosis" for item in snapshot["artifacts"])
+
+
+def test_task_polling_api_resumes_agent_continuation(tmp_path):
+    state = AppState(tmp_path)
+    state.agent = AgentRuntime(
+        state.repository,
+        registry=state.tool_registry,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(state.generated_root),
+        plugin_registry=state.plugin_registry,
+        calibration_registry=state.calibration_registry,
+        task_queue=state.task_queue,
+    )
+    app = create_app(state)
+    client = TestClient(app)
+    case = client.post("/api/cases", json={"title": "Continuation polling"}).json()
+    upload = client.post(
+        f"/api/cases/{case['id']}/files",
+        files={"file": ("performance.csv", CSV_CONTENT, "text/csv")},
+    )
+
+    response = client.post(
+        f"/api/cases/{case['id']}/messages",
+        json={"content": "请分析趋势", "dataset_id": upload.json()["id"]},
+    )
+    task = state.task_queue.list_tasks(case_id=case["id"])[0]
+    state.task_queue.wait(task.id, timeout=30)
+
+    assert response.status_code == 200
+    assert state.repository.list_case_agent_continuations(case["id"])[0].status == "waiting_task"
+    polled = client.get(f"/api/tasks?case_id={case['id']}")
+    snapshot = client.get(f"/api/cases/{case['id']}")
+
+    assert polled.status_code == 200
+    assert state.repository.list_case_agent_continuations(case["id"])[0].status == "completed"
+    assert any(message["role"] == "assistant" and "辅助诊断" in message["content"] for message in snapshot.json()["messages"])
 
 
 def test_api_lists_tool_contracts(tmp_path):
@@ -266,6 +323,7 @@ def test_api_creates_and_runs_workflow_from_case(tmp_path):
         json={"content": "请分析并诊断", "dataset_id": dataset_id},
     )
     assert response.status_code == 200
+    wait_for_tasks(state)
 
     created = client.post(
         f"/api/cases/{case['id']}/workflows",

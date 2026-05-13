@@ -354,6 +354,73 @@ def test_prompt_xml_json_tool_mode_runs_react_without_native_tools(tmp_path):
     assert all("tools" not in request and "tool_choice" not in request for request in requests[1:])
 
 
+def test_prompt_xml_json_async_task_resumes_after_runtime_observation(tmp_path):
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        requests.append(body)
+        if "路由器" in body["messages"][0]["content"]:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "intent": "data_analysis",
+                                        "requires_dataset": True,
+                                        "requires_knowledge": False,
+                                        "target_workflow": None,
+                                        "user_goal": "生成趋势图",
+                                        "response_style": "normal",
+                                        "reason": "用户要求趋势分析",
+                                    }
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        assert "tools" not in body
+        if any("<task_observation" in item["content"] for item in body["messages"]):
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"role": "assistant", "content": "<final_answer>\n趋势图已生成。\n</final_answer>"}}]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": '<tool_calls>[{"id":"call_chart","name":"build_trend_chart","arguments":{}}]</tool_calls>',
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = OpenAIPromptXmlJsonProvider(
+        LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")
+    )
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    runtime, repository, case, dataset = _runtime_with_provider(tmp_path, provider)
+
+    result = runtime.handle_user_message(case_id=case.id, content="请生成趋势图", dataset_id=dataset.id)
+    task = runtime.task_queue.list_tasks(case_id=case.id)[0]
+    runtime.task_queue.wait(task.id, timeout=5)
+    resumed = runtime.resume_ready_continuations(case_id=case.id)
+
+    assert "后台任务" in result.message.content
+    assert resumed[-1].message.content == "趋势图已生成。"
+    assert repository.list_case_agent_continuations(case.id)[0].status == "completed"
+    assert len([request for request in requests if "<available_tools>" in request["messages"][0]["content"]]) == 2
+
+
 def test_prompt_xml_json_tool_mode_rejects_invalid_xml():
     provider = OpenAIPromptXmlJsonProvider(
         LLMConfig(provider="openai_compatible", tool_mode="prompt_xml_json", base_url="http://llm.test/v1")

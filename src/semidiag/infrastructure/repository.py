@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from semidiag.domain import (
+    AgentContinuation,
     AgentMessage,
     AgentStepTrace,
     AnalysisArtifact,
@@ -222,6 +223,28 @@ class SQLiteRepository:
     def list_case_agent_step_traces(self, case_id: str) -> list[AgentStepTrace]:
         return [item for item in self._list("agent_step", AgentStepTrace) if item.case_id == case_id]
 
+    def upsert_agent_continuation(self, continuation: AgentContinuation) -> AgentContinuation:
+        self._put("agent_continuation", continuation)
+        return continuation
+
+    def get_agent_continuation(self, continuation_id: str) -> AgentContinuation | None:
+        return self._get("agent_continuation", continuation_id, AgentContinuation)
+
+    def list_case_agent_continuations(self, case_id: str) -> list[AgentContinuation]:
+        return [
+            item for item in self._list("agent_continuation", AgentContinuation) if item.case_id == case_id
+        ]
+
+    def list_waiting_agent_continuations(self, case_id: str | None = None) -> list[AgentContinuation]:
+        items = [
+            item
+            for item in self._list("agent_continuation", AgentContinuation)
+            if item.status == "waiting_task"
+        ]
+        if case_id is not None:
+            items = [item for item in items if item.case_id == case_id]
+        return items
+
     def add_audit_event(self, event: AuditEvent) -> AuditEvent:
         self._put("audit", event)
         return event
@@ -250,6 +273,7 @@ class SQLiteRepository:
             "tasks": self.list_case_tasks(case_id),
             "tool_traces": self.list_case_tool_traces(case_id),
             "agent_steps": self.list_case_agent_step_traces(case_id),
+            "agent_continuations": self.list_case_agent_continuations(case_id),
             "audit_events": self.list_case_audit_events(case_id),
             "llm_audit_events": self.list_case_llm_audit_events(case_id),
         }

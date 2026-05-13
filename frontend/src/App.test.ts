@@ -320,6 +320,17 @@ describe("App", () => {
           evidence: [],
           tool_traces: [],
           agent_steps: [{ id: "step_1", step_index: 1, phase: "observe", duration_ms: 8 }],
+          agent_continuations: [{
+            id: "cont_1",
+            case_id: "case_1",
+            status: "completed",
+            pending_task_ids: ["task_1"],
+            step_count: 1,
+            result_message_id: "msg_2",
+            created_at: "now",
+            updated_at: "now",
+            completed_at: "now"
+          }],
           llm_audit_events: [{
             id: "llm_1",
             provider: "openai_compatible",
@@ -343,6 +354,7 @@ describe("App", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/cases/case_1/trace");
     expect(wrapper.text()).toContain("Agent 调试台");
     expect(wrapper.text()).toContain("1 · observe");
+    expect(wrapper.text()).toContain("completed · step 1");
     expect(wrapper.text()).toContain("openai_compatible / mock");
     expect(wrapper.text()).toContain("完整回复");
     expect(wrapper.text()).toContain("stream · 2 chunks");
