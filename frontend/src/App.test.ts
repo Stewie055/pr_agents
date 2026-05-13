@@ -22,6 +22,10 @@ function streamResponse(events: Array<{ event: string; data: unknown }>) {
   };
 }
 
+function encodeSse(events: Array<{ event: string; data: unknown }>) {
+  return new TextEncoder().encode(events.map((item) => `event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`).join(""));
+}
+
 function caseSnapshot(overrides: Record<string, unknown> = {}) {
   return {
     case: { id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" },
@@ -122,6 +126,59 @@ describe("App", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/cases/case_1/messages/stream", expect.objectContaining({ method: "POST" }));
     expect(wrapper.text()).toContain("完成字段检查");
     expect(wrapper.text()).toContain("诊断完成");
+  });
+
+  it("renders assistant deltas before the final stream event", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array>;
+    const streamingResponse = {
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        }
+      })
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" }))
+      .mockResolvedValueOnce(jsonResponse(caseSnapshot()))
+      .mockResolvedValueOnce(streamingResponse)
+      .mockResolvedValueOnce(jsonResponse(caseSnapshot({
+        messages: [{ id: "msg_1", role: "assistant", content: "第一段第二段" }]
+      })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await wrapper.find("button").trigger("click");
+    await flushPromises();
+    await wrapper.find(".composer button").trigger("click");
+    await flushPromises();
+
+    streamController!.enqueue(encodeSse([
+      { event: "started", data: { message: "开始处理请求" } },
+      { event: "route", data: { intent: "chat_response", requires_dataset: false } },
+      { event: "message_delta", data: { delta: "第一段" } }
+    ]));
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("第一段");
+    expect(wrapper.text()).not.toContain("第二段");
+
+    streamController!.enqueue(encodeSse([
+      { event: "message_delta", data: { delta: "第二段" } },
+      {
+        event: "final",
+        data: {
+          message: { id: "msg_1", role: "assistant", content: "第一段第二段" },
+          summary: "第一段第二段",
+          artifacts: [],
+          tool_traces: []
+        }
+      }
+    ]));
+    streamController!.close();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("第一段第二段");
   });
 
   it("shows case tasks and cancels pending tasks", async () => {

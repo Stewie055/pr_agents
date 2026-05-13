@@ -28,7 +28,7 @@
 - SSE Agent 事件流，实时展示路由、工具调用、产物生成和回复增量
 - 非工具聊天和 ReAct 最终回复均按 LLM delta 实时输出，不等待完整回复生成
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
-- OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积
+- OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积；前端对 assistant 临时消息按 delta 做响应式更新，避免等 final 事件一次性刷新
 - 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、聚合后的 LLM 审计摘要并导出脱敏 JSON
 - 通用 CSV 文件分析、绘图、诊断和 PPT 报告插件
 - Matplotlib PNG 图表 Artifact，多图图库、下载和全屏预览

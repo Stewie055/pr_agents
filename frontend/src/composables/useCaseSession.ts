@@ -158,7 +158,7 @@ export function useCaseSession() {
       return;
     }
     if (event.event === "message_delta") {
-      assistantMessage.content += event.data.delta;
+      appendAssistantDelta(assistantMessage.id, event.data.delta);
       return;
     }
     if (event.event === "final") {
@@ -205,6 +205,18 @@ export function useCaseSession() {
     if (!progressItems.value.length) {
       addProgress("请求失败", "error", detail);
     }
+  }
+
+  function appendAssistantDelta(messageId: string, delta: string) {
+    transientMessages.value = transientMessages.value.map((message) => {
+      if (message.id !== messageId) {
+        return message;
+      }
+      return {
+        ...message,
+        content: `${message.content}${delta}`
+      };
+    });
   }
 
   async function loadTrace() {
