@@ -15,8 +15,8 @@
 - 测校插件可以提供 Markdown Skill 文档，只有插件被选中时才注入 Agent 上下文。
 - Tool 调用必须经过框架默认 guardrail，拦截跨案例数据、手填内部 ID 和缺少结构化输出的结果。
 - 插件发现必须优先读取 manifest，不执行业务实现代码即可展示插件能力、工具、Skill、配置需求和状态。
-- 绘图、PPT 报告等长耗时 Tool 必须通过任务队列执行，并通过 task id 暴露状态。
-- 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、产物生成和最终回复增量。
+- 绘图、PPT 报告等长耗时 Tool 必须通过任务队列执行，并通过 task id 暴露状态；任务记录必须持久化，服务重启后不得静默丢失运行中任务。
+- 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、任务状态、产物生成和最终回复增量。
 - Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
 - 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
 - 用户可见回复默认不暴露内部 case/dataset/artifact id。
@@ -50,7 +50,7 @@
 - LLMProvider streaming and Agent SSE event stream。
 - LLM prompt/request/response audit。
 - LLM Router/Triage and deterministic State Gate。
-- ReAct multi-step tool loop and AgentStepTrace。
+- ReAct multi-step tool loop and AgentStepTrace；同步和流式路径共享同一套 step executor。
 - Trace debug API and WebUI debug console。
 - Stream-first WebUI with independent chat scrolling and right-side diagnostic workspace。
 - Matplotlib PNG chart artifacts and chart gallery。
@@ -62,7 +62,7 @@
 - CI quality gate covering backend lint/tests and frontend typecheck/tests/build.
 - Diagnostic plugin registry with `equipment_type` based plugin resolution.
 - Structured metric repository contract with SQLite default implementation and ClickHouse adapter target.
-- In-process task queue foundation with task status API for future long-running analysis, chart, report, and workflow jobs.
+- SQLite-persisted task records with an in-process task executor and task status API for long-running analysis, chart, report, and workflow jobs.
 - Midterm memory persisted in SQLite and loaded into LLM case context.
 - Local knowledge records with keyword retrieval for knowledge_qa context, keeping vector RAG replaceable later.
 - Workflow template foundation with case trace capture and manual replay API.

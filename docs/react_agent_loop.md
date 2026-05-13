@@ -25,12 +25,15 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 
 非流式 `/messages` 接口保留，用于同步调用和回归测试。
 
+同步和流式接口必须共享同一套 ReAct step executor。executor 负责 LLM planning、重复工具检测、参数注入、工具执行、Observation 构造、trace 写入和 stop/finalize；接口层只决定是直接返回结果还是把同一批 step event 转为 SSE。
+
 ## Stop Conditions
 
 - LLM 返回 final answer 且没有 tool calls。
 - 达到 `max_steps=6`。
 - 同一工具调用重复超过阈值。
 - LLM 请求失败或返回未知工具。
+- 工具提交异步任务后，当前 step 以 `tool_result.task_ids` 进入 Observation；任务完成由任务 API 和前端轮询刷新体现。
 
 ## Observation Contract
 

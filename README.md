@@ -11,20 +11,20 @@
 - 本地设备性能文件上传
 - 可插拔诊断插件包骨架
 - 诊断插件注册表，可按案例 `equipment_type` 选择业务插件
-- 进程内任务队列基础和任务状态查询 API
+- SQLite 持久化任务记录、进程内任务执行器和任务状态查询 API
 - Workflow 模板基础，可从案例工具轨迹沉淀并手动重放
 - 仓库内 `business/` 扩展加载，支持业务 Tool 和 LT 测校项目录式 Plugin
 - Plugin-scoped tools：Agent 每轮只看到公共工具和被选中测校项插件提供的工具
 - Manifest-first plugin discovery：通过 `plugin.json` 发现插件能力、配置需求、工具和 Skill
 - Plugin Markdown Skills：被选中插件的业务分析指导按需进入 ReAct prompt
 - Tool Guardrails：统一拦截跨案例数据、手填内部 dataset id 和缺少结构化输出的工具结果
-- 异步任务型工具：图表生成和 PPT 报告生成通过任务队列执行
+- 异步任务型工具：图表生成和 PPT 报告生成通过任务队列执行，前端可跟踪任务状态并自动刷新产物
 - OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要
 - 本地知识库记录和关键词检索 API，供资料问答路径使用
 - State Gate，自动检查当前案例是否已有数据，缺数据时提示上传
-- ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复
+- ReAct 多步工具循环，支持观察工具结果后继续分析直到形成最终回复；同步和流式接口共享同一套 step executor
 - SSE Agent 事件流，实时展示路由、工具调用、产物生成和回复增量
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
 - OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积

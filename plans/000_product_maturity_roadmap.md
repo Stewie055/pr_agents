@@ -16,14 +16,14 @@
 
 1. Engineering hardening: 拆分 Runtime/LLM、增加质量门禁和 CI。
 2. Data and plugin platform: 插件注册模型、指标 schema、ClickHouse 抽象、正式 Service/Tool contract。
-3. Async task and Workflow: 进程内任务队列、任务状态 API、Workflow 模板与重放。
+3. Async task and Workflow: SQLite 持久化任务记录、任务状态 API、前端任务视图、Workflow 模板与重放。
 4. Memory and RAG: 中期记忆持久化、长期知识库抽象、检索增强问答。
 5. Product UI and operations: 案例管理、任务视图、产物版本、Trace 增强、日志和部署。
 6. Agent plugin maturity: manifest-first 插件发现、Skill 选择、工具裁剪、Guardrail 治理和任务型工具。
 
 ## Done Criteria
 
-- 主链路保持可运行：上传数据、Agent 分析、图表、PPT、Trace。
+- 主链路保持可运行：上传数据、Agent 分析、图表、PPT、任务状态、Trace。
 - 后端测试、前端测试和前端构建通过。
 - 新能力具备可替换接口，不把真实保密业务逻辑写死在 Agent 或 WebUI。
 - 工程结构能支撑后续多 Agent、Workflow 和真实业务插件扩展。

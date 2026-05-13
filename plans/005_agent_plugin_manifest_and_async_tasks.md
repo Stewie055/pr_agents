@@ -22,10 +22,22 @@
 - Plugin/Skill management UI：展示插件状态、配置缺失、Skill 列表和加载错误。
 - File classifier maturity：支持多规则优先级、内容 sniff、冲突解释和人工修正 metadata。
 
+## Remaining Product Gaps
+
+- Runtime convergence：同步和流式 ReAct 仍存在重复执行逻辑，后续工具错误、任务事件和 trace 改动容易漂移。
+- Persistent task UX：任务已能异步执行，但任务记录仍是进程内状态，前端缺少任务列表、轮询、失败展示和产物完成自动刷新。
+- Tool/Skill selection：选中插件后还需要按当前问题继续裁剪 tool/skill，避免单插件工具过多。
+- RAG memory maturity：长期记忆仍是关键词检索，需要 embedding/RAG、来源版本和 token budget。
+- Runtime schema validation：Tool input/output schema 还未做运行时校验。
+- Token/cost accounting：LLM usage、cost、latency 还未进入审计统计。
+- Plugin management UI：插件状态、配置缺失、Skill 和加载错误还没有独立管理视图。
+
 ## Current Priority
 
 1. Plugin manifest-only discovery with directory-style plugin packages.
 2. Async task tools for chart generation and PPT report generation.
+3. ReAct runtime convergence: non-streaming and streaming paths share one step executor.
+4. Persistent task UX: task records are stored in SQLite, exposed by case, and refreshed in the WebUI.
 
 ## Acceptance
 
@@ -34,3 +46,6 @@
 - 图表和报告工具返回 task 引用，任务完成后生成 Artifact。
 - README、REQUIREMENTS 和 docs 同步更新。
 - 后端测试、前端测试和构建通过。
+- 同步和流式 Agent 对同一工具链路产生一致的 tool trace、artifact 和 final message metadata。
+- 服务重启后 pending/running task 被标记为 interrupted/failed，不静默丢失。
+- 前端能展示当前案例任务状态，任务完成后自动刷新图表/PPT。
