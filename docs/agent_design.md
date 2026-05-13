@@ -67,7 +67,9 @@ Router 由 LLM 完成，不使用规则分类器代替语义判断。`RouteDecis
 
 默认 `max_steps=6`。重复调用同一工具超过阈值时停止，避免死循环。工具执行错误不会直接终止请求，而是作为 error observation 回填给模型。
 
-框架默认 registry 不内置业务分析工具。业务扩展工具不全局暴露给 Agent；测校插件被选中后，Runtime 才把该插件声明的 `ToolSpec` 加入本轮 active registry。通用 CSV 分析能力也作为 `business/plugins/csv_file_analysis.py` 插件提供，而不是框架 fallback。
+框架默认 registry 不内置业务分析工具。业务扩展工具不全局暴露给 Agent；测校插件被选中后，Runtime 才把该插件声明的 `ToolSpec` 加入本轮 active registry，并把该插件的 Markdown Skill guidance 注入 ReAct prompt。通用 CSV 分析能力也作为 `business/plugins/csv_file_analysis.py` 插件提供，而不是框架 fallback。
+
+Plugin Skill 是业务指导文档，不执行代码。它用于补充某个测校的分析方法、证据优先级和报告组织要求；未选中的插件 Skill 不进入模型上下文。
 
 ## User Visible Artifacts
 
@@ -136,6 +138,7 @@ LLM 公共 contract、prompt XML+JSON parser 和审计脱敏已拆到独立模�
 - 处置建议确认。
 
 当前 Tool Registry 已包含 `risk_level` 字段和高风险工具拦截逻辑。
+每次工具调用还会执行默认 Tool Guardrail，拦截跨案例数据、用户/模型手填内部 dataset id、空 summary 或缺少结构化输出的 ToolResult。
 
 ## Workflow
 

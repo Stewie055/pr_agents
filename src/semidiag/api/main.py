@@ -61,6 +61,7 @@ class AppState:
         self.tool_registry = build_default_registry()
         self.extension_loader.load_tools(self.tool_registry)
         self.extension_loader.load_plugins(self.calibration_registry)
+        self.extension_loader.load_plugin_skills(self.calibration_registry)
         self.agent = AgentRuntime(
             self.repository,
             registry=self.tool_registry,
@@ -175,7 +176,15 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     @app.get("/api/calibrations")
     def list_calibrations(current=Depends(get_state)):
-        return {"calibrations": [manifest.model_dump(mode="json") for manifest in current.calibration_registry.list_manifests()]}
+        return {
+            "calibrations": [
+                {
+                    **plugin.manifest.model_dump(mode="json"),
+                    "skills": [skill.summary() for skill in plugin.skills],
+                }
+                for plugin in current.calibration_registry.list_plugins()
+            ]
+        }
 
     @app.get("/api/extensions")
     def list_extensions(current=Depends(get_state)):

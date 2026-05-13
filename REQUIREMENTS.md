@@ -12,6 +12,8 @@
 - Agent 必须先通过 LLM Router/Triage 理解用户意图，支持聊天、资料问答、数据分析、诊断、报告和 Workflow 请求等路径。
 - 系统本地 State Gate 只负责确定性约束，例如是否已有数据集、工具是否可用、是否需要审批。
 - 分析、诊断、报告路径必须使用 ReAct/Graph 执行模型，允许多轮工具调用、观察和继续推理。
+- 测校插件可以提供 Markdown Skill 文档，只有插件被选中时才注入 Agent 上下文。
+- Tool 调用必须经过框架默认 guardrail，拦截跨案例数据、手填内部 ID 和缺少结构化输出的结果。
 - 分析、诊断、报告路径必须提供用户可见流式进度，包括路由、工具调用、产物生成和最终回复增量。
 - Tool 返回必须包含面向 LLM 的结构化 Observation，不能只返回自然语言 summary。
 - 系统自动选择当前案例最新上传的数据集，不要求用户手动提供 dataset id。
@@ -64,6 +66,8 @@
 - Workflow template foundation with case trace capture and manual replay API.
 - Business extension loader for `business/tools/*.py` and `business/plugins/*.py` using `register(registry)`; business services live under `business/services`.
 - LT calibration plugin manifests and plugin-scoped tool exposure to avoid tool explosion.
+- Markdown Skill loader for selected calibration plugins.
+- Default Tool Guardrail for dataset ownership, system-managed dataset id, and structured ToolResult validation.
 - LT log pool metadata detected from filename rules for LT-D, LT-C, and LT-R.
 
 ## Non-Goals For Current Slice

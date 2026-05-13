@@ -12,7 +12,8 @@ from semidiag.agent.llm import LLMResult, LLMToolCall
 from semidiag.api.main import AppState, create_app
 from semidiag.extensions import ExtensionLoader
 from semidiag.plugins import CalibrationPluginRegistry, ToolScopeBuilder
-from semidiag.tools import ToolDefinition, ToolRegistry, ToolResult, ToolSpec, build_default_registry
+from semidiag.plugins.skills import load_markdown_skill
+from semidiag.tools import ToolContext, ToolDefinition, ToolRegistry, ToolResult, ToolSpec, build_default_registry
 
 
 def test_extension_loader_loads_business_tools(tmp_path):
@@ -79,6 +80,89 @@ def register(registry):
     assert registry.list_manifests()[0].tool_names == ["lt_lazy"]
 
 
+def test_extension_loader_loads_markdown_skills_for_plugins(tmp_path):
+    plugins_dir = tmp_path / "business" / "plugins"
+    skills_dir = plugins_dir / "calibration" / "skills"
+    skills_dir.mkdir(parents=True)
+    (plugins_dir / "calibration.py").write_text(
+        """
+from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
+
+def lazy_tool(context, arguments):
+    return ToolResult(summary="ok", data={"ok": True})
+
+def register(registry):
+    registry.register(
+        CalibrationPlugin(
+            manifest=CalibrationPluginManifest(plugin_id="lt.lazy", display_name="Lazy"),
+            tools=[ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)],
+        )
+    )
+""",
+        encoding="utf-8",
+    )
+    (skills_dir / "lazy.md").write_text(
+        """---
+name: lt_lazy_skill
+description: Lazy skill guidance.
+plugin_id: lt.lazy
+triggers: [lazy, test]
+max_context_chars: 100
+---
+
+Use this lazy skill only for selected lazy plugin analysis.
+""",
+        encoding="utf-8",
+    )
+    registry = CalibrationPluginRegistry()
+    loader = ExtensionLoader(tmp_path / "business")
+
+    loader.load_plugins(registry)
+    loader.load_plugin_skills(registry)
+
+    plugin = registry.get("lt.lazy")
+    assert plugin is not None
+    assert plugin.manifest.skill_names == ["lt_lazy_skill"]
+    assert plugin.skills[0].description == "Lazy skill guidance."
+    assert any(event.extension_type == "skill" and event.status == "loaded" for event in loader.report.events)
+
+
+def test_extension_loader_records_bad_markdown_skill(tmp_path):
+    skills_dir = tmp_path / "business" / "plugins" / "missing" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "bad.md").write_text("no frontmatter", encoding="utf-8")
+    registry = CalibrationPluginRegistry()
+
+    report = ExtensionLoader(tmp_path / "business").load_plugin_skills(registry)
+
+    assert report.events[0].extension_type == "skill"
+    assert report.events[0].status == "error"
+    assert "frontmatter" in (report.events[0].error or "")
+
+
+def test_markdown_skill_requires_known_plugin(tmp_path):
+    skills_dir = tmp_path / "business" / "plugins" / "orphan" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "orphan.md").write_text(
+        """---
+name: orphan
+description: Orphan skill.
+plugin_id: lt.unknown
+---
+
+No plugin owns this skill.
+""",
+        encoding="utf-8",
+    )
+    registry = CalibrationPluginRegistry()
+
+    report = ExtensionLoader(tmp_path / "business").load_plugin_skills(registry)
+
+    assert report.events[0].status == "error"
+    assert "lt.unknown" in (report.events[0].error or "")
+
+
 def test_tool_scope_builder_exposes_only_common_and_selected_plugin_tools(tmp_path):
     state = AppState(tmp_path)
     scoped = ToolScopeBuilder(common_registry=build_default_registry(), calibration_registry=state.calibration_registry).build(
@@ -107,6 +191,7 @@ def test_api_lists_calibrations_and_extension_errors(tmp_path):
 
     assert calibrations.status_code == 200
     assert any(item["plugin_id"] == "lt.example.offline_check" for item in calibrations.json()["calibrations"])
+    assert any(item["skills"] for item in calibrations.json()["calibrations"] if item["plugin_id"] == "lt.example.offline_check")
     assert extensions.status_code == 200
     assert any(item["status"] == "loaded" for item in extensions.json()["extensions"])
     assert tools.status_code == 200
@@ -124,6 +209,44 @@ def test_tool_registry_rejects_duplicate_names():
         assert "duplicate" in str(exc)
     else:
         raise AssertionError("duplicate tool registration should fail")
+
+
+def test_tool_guardrail_rejects_user_supplied_dataset_id(tmp_path):
+    state = AppState(tmp_path)
+    case = state.repository.create_case("Guardrail")
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="guarded", description="guarded"),
+        lambda context, arguments: ToolResult(summary="ok", data={"ok": True}),
+    )
+    context = ToolContext(case_id=case.id, actor="engineer", repository=state.repository)
+
+    try:
+        registry.run("guarded", context, {"dataset_id": "user_supplied"})
+    except ValueError as exc:
+        assert "dataset_id" in str(exc)
+    else:
+        raise AssertionError("user supplied dataset_id should fail guardrail")
+
+    assert state.repository.list_case_tool_traces(case.id)[0].status == "error"
+
+
+def test_tool_guardrail_rejects_empty_structured_result(tmp_path):
+    state = AppState(tmp_path)
+    case = state.repository.create_case("Guardrail")
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(name="empty_result", description="empty"),
+        lambda context, arguments: ToolResult(summary="ok"),
+    )
+    context = ToolContext(case_id=case.id, actor="engineer", repository=state.repository)
+
+    try:
+        registry.run("empty_result", context, {})
+    except ValueError as exc:
+        assert "structured" in str(exc)
+    else:
+        raise AssertionError("empty ToolResult should fail guardrail")
 
 
 def test_system_injected_arguments_are_hidden_from_llm_schema():
@@ -192,6 +315,29 @@ def test_tool_result_is_the_single_observation_payload():
     assert not hasattr(tools_module, "ToolObservation")
 
 
+def test_markdown_skill_parser_extracts_frontmatter(tmp_path):
+    path = tmp_path / "skill.md"
+    path.write_text(
+        """---
+name: parser_skill
+description: Parser skill.
+plugin_id: lt.parser
+triggers: [a, b]
+max_context_chars: 8
+---
+
+1234567890
+""",
+        encoding="utf-8",
+    )
+
+    skill = load_markdown_skill(path)
+
+    assert skill.name == "parser_skill"
+    assert skill.triggers == ["a", "b"]
+    assert skill.context_excerpt() == "12345678"
+
+
 def test_framework_source_does_not_embed_csv_analysis_tools():
     forbidden = {
         "parse_dataset",
@@ -245,6 +391,9 @@ class ScopedToolProvider:
 
     def plan_tool_calls(self, *, messages, tools):
         self.plan_round += 1
+        if not any(item.get("role") == "tool" for item in messages):
+            assert "Selected skill guidance" in messages[-1]["content"]
+            assert "lt_example_offline_check" in messages[-1]["content"]
         tool_names = {tool["function"]["name"] for tool in tools}
         assert "lt_example_offline_analyze" in tool_names
         assert "lt_example_offline_prepare" in tool_names

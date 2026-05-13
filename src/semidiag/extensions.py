@@ -6,6 +6,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from semidiag.plugins.skills import load_markdown_skill
+
 
 @dataclass
 class ExtensionLoadEvent:
@@ -41,6 +43,14 @@ class ExtensionLoader:
         self._load_directory(self.extension_root / "plugins", "plugin", registry)
         return self.report
 
+    def load_plugin_skills(self, registry) -> ExtensionLoadReport:
+        plugins_dir = self.extension_root / "plugins"
+        if not plugins_dir.exists():
+            return self.report
+        for path in sorted(plugins_dir.glob("*/skills/*.md")):
+            self._load_skill_file(path=path, registry=registry)
+        return self.report
+
     def _load_directory(self, directory: Path, extension_type: str, registry) -> None:
         if not directory.exists():
             return
@@ -60,6 +70,15 @@ class ExtensionLoader:
             self.report.add(path=path, extension_type=extension_type, status="error", error=str(exc))
             return
         self.report.add(path=path, extension_type=extension_type, status="loaded")
+
+    def _load_skill_file(self, *, path: Path, registry) -> None:
+        try:
+            skill = load_markdown_skill(path)
+            registry.attach_skill(skill)
+        except Exception as exc:
+            self.report.add(path=path, extension_type="skill", status="error", error=str(exc))
+            return
+        self.report.add(path=path, extension_type="skill", status="loaded")
 
     def _import_module(self, path: Path) -> ModuleType:
         module_name = f"semidiag_business_{path.stem}_{abs(hash(path))}"

@@ -42,6 +42,7 @@ Tool 执行必须：
 - 写入 AuditEvent。
 
 Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Evidence` 或诊断 payload。
+框架默认 Tool Guardrail 会在 handler 前后执行这些基础约束；业务 Tool 仍应在 handler 内做更细的业务校验。
 
 业务 Tool 可以来自两类来源：
 
@@ -49,6 +50,7 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 - Plugin Tool：测校项插件提供的工具，只有插件被选中后才进入本轮 active registry。
 
 `dataset_id` 这类系统参数应放入 `system_injected_args`。Runtime 会自动注入，LLM 可见 schema 会隐藏这些字段，用户也不需要手动提供内部 ID。
+如果模型或用户传入未声明为系统注入的 `dataset_id`，Tool 调用会被 guardrail 拦截并记录错误 trace。
 
 ## ToolResult Observation Payload
 

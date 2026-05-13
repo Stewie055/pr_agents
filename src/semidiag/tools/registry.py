@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from semidiag.domain import AnalysisArtifact, AuditEvent, DatasetRecord, DiagnosticCase, Evidence, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
+from semidiag.tools.guardrails import DefaultToolGuardrail, ToolGuardrail
 
 
 class ToolDefinition(BaseModel):
@@ -85,9 +86,10 @@ class ToolSpec:
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, guardrails: list[ToolGuardrail] | None = None) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
         self._handlers: dict[str, ToolHandler] = {}
+        self._guardrails = guardrails if guardrails is not None else [DefaultToolGuardrail()]
 
     def register(self, definition: ToolDefinition, handler: ToolHandler) -> None:
         if definition.name in self._definitions:
@@ -157,7 +159,11 @@ class ToolRegistry:
 
         started = perf_counter()
         try:
+            for guardrail in self._guardrails:
+                guardrail.before_call(context, definition, arguments)
             result = self._handlers[name](context, arguments)
+            for guardrail in self._guardrails:
+                guardrail.after_call(context, definition, result)
         except Exception as exc:
             duration = int((perf_counter() - started) * 1000)
             context.repository.add_tool_trace(

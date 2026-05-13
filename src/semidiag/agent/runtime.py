@@ -112,13 +112,14 @@ class AgentRuntime:
         if decision.intent in {"chat_response", "knowledge_qa", "clarification", "workflow_request"}:
             return self._handle_non_tool_llm_turn(case_id=case_id, content=content, decision=decision)
 
+        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         messages = self._build_llm_messages(
             case_id=case_id,
             user_content=content,
             active_dataset_id=active_dataset_id,
             decision=decision,
+            selection=selection,
         )
-        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         return self._run_react_loop(
             AgentState(
                 case_id=case_id,
@@ -178,13 +179,14 @@ class AgentRuntime:
             yield from self._stream_non_tool_llm_turn(case_id=case_id, content=content, decision=decision)
             return
 
+        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         messages = self._build_llm_messages(
             case_id=case_id,
             user_content=content,
             active_dataset_id=active_dataset_id,
             decision=decision,
+            selection=selection,
         )
-        selection = self._select_calibration_plugins(case_id=case_id, content=content)
         yield from self._run_react_loop_stream(
             AgentState(
                 case_id=case_id,
@@ -463,6 +465,7 @@ class AgentRuntime:
                     if state.selected_plugins is not None
                     else None
                 },
+                {"selected_skills": self._selected_skill_names(state.selected_plugins)},
             ],
         )
 
@@ -582,6 +585,7 @@ class AgentRuntime:
         user_content: str,
         active_dataset_id: str | None,
         decision: RouteDecision,
+        selection: CalibrationSelection,
     ) -> list[dict[str, Any]]:
         case = self.repository.get_case(case_id)
         datasets = self.repository.list_case_datasets(case_id)
@@ -606,6 +610,8 @@ class AgentRuntime:
                 for item in datasets
             ],
             "calibration_plugins": [manifest.model_dump(mode="json") for manifest in self.calibration_registry.list_manifests()],
+            "selected_plugin_ids": selection.plugin_ids,
+            "selected_skills": self._selected_skill_summaries(selection),
             "artifacts": [
                 {
                     "id": item.id,
@@ -648,9 +654,32 @@ class AgentRuntime:
             f"{user_content}\n\n"
             f"Route decision JSON:\n{decision.model_dump(mode='json')}\n"
             f"Active dataset available: {bool(active_dataset_id)}\n"
+            f"Selected skill guidance:\n{self._selected_skill_guidance(selection)}\n"
             f"Case context summary JSON:\n{context}"
         )
         return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_message}]
+
+    def _selected_skill_names(self, selection: CalibrationSelection | None) -> list[str]:
+        if selection is None:
+            return []
+        return [skill.name for skill in self.calibration_registry.list_skills(selection.plugin_ids)]
+
+    def _selected_skill_summaries(self, selection: CalibrationSelection) -> list[dict[str, Any]]:
+        return [skill.summary() for skill in self.calibration_registry.list_skills(selection.plugin_ids)]
+
+    def _selected_skill_guidance(self, selection: CalibrationSelection) -> str:
+        chunks: list[str] = []
+        total_chars = 0
+        for skill in self.calibration_registry.list_skills(selection.plugin_ids):
+            excerpt = skill.context_excerpt()
+            chunk = f"## {skill.name}\nDescription: {skill.description}\nPlugin: {skill.plugin_id}\n{excerpt}"
+            remaining = 12000 - total_chars
+            if remaining <= 0:
+                break
+            chunk = chunk[:remaining]
+            chunks.append(chunk)
+            total_chars += len(chunk)
+        return "\n\n".join(chunks) if chunks else "No selected plugin skills."
 
     def _handle_non_tool_llm_turn(
         self,

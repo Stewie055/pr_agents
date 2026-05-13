@@ -13,6 +13,9 @@ business/
   plugins/
     csv_file_analysis.py
     lt_example_calibration.py
+    lt_example_calibration/
+      skills/
+        offline_check.md
   file_classifiers/
     lt_log_metadata.py
 ```
@@ -60,9 +63,13 @@ Manifest 必须声明：
 - `supported_models`
 - `description`
 - `tool_names`
+- `skill_names`
+- `capability_tags`
+- `requires_config`
 
 Plugin tools 内部可以自由调用保密 Service、parser、cleaner、analyzer、plotter 和 reporter。平台只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
 `tool_names` 可省略，框架会从 `tools` 自动推导；如果显式声明，则必须和 `tools` 中的 ToolDefinition 名称一致，否则构建 active registry 时会报错，避免 Agent 看到不存在的能力。
+`skill_names` 可省略，框架会从 Markdown Skill 自动推导。`requires_config` 用于声明业务插件运行前需要的环境变量或配置项，当前只展示不强制拦截。
 
 最小插件示例：
 
@@ -127,6 +134,42 @@ def register(registry):
 
 业务 Tool 必须校验数据归属当前案例。需要系统注入的参数应放到 `ToolDefinition.system_injected_args`，不要暴露给 LLM 或用户。
 
+## Plugin Skills
+
+Skill 是插件附带的业务指导文档，不执行代码。它用于告诉 Agent 某个测校如何分析、先看什么证据、报告怎么组织。Skill 只有在对应插件被 PluginSelector 选中后才进入 ReAct prompt，避免所有测校知识同时污染上下文。
+
+Skill 文件放在：
+
+```text
+business/plugins/<plugin_file_stem>/skills/*.md
+```
+
+Markdown 必须使用 frontmatter：
+
+```markdown
+---
+name: lt_example_offline_check
+description: Guidance for LT offline setup check.
+plugin_id: lt.example.offline_check
+triggers: [offline, LT-C, LT-R]
+max_context_chars: 4000
+---
+
+# Analysis Guidance
+
+这里写测校分析方法、判断准则、报告要求和注意事项。
+```
+
+字段说明：
+
+- `name`: Skill 唯一名，进入插件 manifest 的 `skill_names`。
+- `description`: 给调试台、API 和 Agent 的简短说明。
+- `plugin_id`: 必须匹配已注册插件，否则加载为 error。
+- `triggers`: 可选关键词，后续用于更细粒度 skill selection。
+- `max_context_chars`: 可选，单个 Skill 注入 prompt 的最大字符数，默认 4000。
+
+Skill 加载失败不会阻断服务启动，错误会出现在 `GET /api/extensions`。
+
 ## ToolResult
 
 Tool handler 返回：
@@ -139,6 +182,18 @@ Tool handler 返回：
 - `next_suggestions`: 失败恢复或下一步候选工具名，仅作为 LLM 提示，不是强制流程。
 
 `ToolResult` 和 observation 不再拆成两个重复结构；Runtime 会直接把 ToolResult 转成统一 observation 字典回填模型。
+
+## Tool Guardrails
+
+框架在每次 Tool 调用前后执行默认 guardrail：
+
+- `active_dataset` 必须属于当前 case。
+- `dataset_id` 只能由系统通过 `system_injected_args` 注入，不能由 LLM 或用户手填。
+- ToolResult.summary 不能为空。
+- ToolResult 必须包含结构化 `data`、Artifact、Evidence 或已存在对象引用。
+- `risk_level=high` 的工具仍会进入人工审批拦截。
+
+Guardrail 失败会写入 ToolCallTrace error，并作为 error observation 回填给模型。
 
 ## File Classifiers
 

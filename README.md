@@ -15,6 +15,8 @@
 - Workflow 模板基础，可从案例工具轨迹沉淀并手动重放
 - 仓库内 `business/` 扩展加载，支持业务 Tool 和 LT 测校项 Plugin 单文件注册
 - Plugin-scoped tools：Agent 每轮只看到公共工具和被选中测校项插件提供的工具
+- Plugin Markdown Skills：被选中插件的业务分析指导按需进入 ReAct prompt
+- Tool Guardrails：统一拦截跨案例数据、手填内部 dataset id 和缺少结构化输出的工具结果
 - OpenAI-compatible LLM + Agent runtime + Tool Registry
 - LLM Router/Triage，根据用户问题选择聊天、资料问答、数据分析、诊断或报告路径
 - SQLite 持久化中期记忆摘要

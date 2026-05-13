@@ -13,6 +13,7 @@ from semidiag.plugins.calibration import (
 from semidiag.plugins.generic_equipment import GenericEquipmentPlugin, LTEquipmentPlugin
 from semidiag.plugins.registry import PluginRegistry
 from semidiag.plugins.selector import PluginSelectionContext, PluginSelectorAgent
+from semidiag.plugins.skills import SkillSpec, load_markdown_skill
 
 __all__ = [
     "CalibrationPlugin",
@@ -27,5 +28,7 @@ __all__ = [
     "PluginRegistry",
     "PluginSelectionContext",
     "PluginSelectorAgent",
+    "SkillSpec",
     "ToolScopeBuilder",
+    "load_markdown_skill",
 ]

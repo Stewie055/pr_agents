@@ -64,6 +64,7 @@ XML+JSON 解析由独立 parser 负责。缺失动作块、同时出现 `<tool_c
 - LLM audit request/response、provider、model、tool mode、耗时和错误。
 - ToolCallTrace 和结构化 Observation。
 - Artifact/Evidence 摘要。
+- 被选中的插件和 Skill 名称。
 
 Trace API 默认统一脱敏密钥和认证头，并截断超长文本。导出接口返回同样脱敏后的 JSON。
 
