@@ -444,7 +444,7 @@ class OpenAIPromptXmlJsonProvider:
                 f"{json.dumps(tools, ensure_ascii=False)}\n"
                 "</available_tools>\n"
                 "<tool_call_format>\n"
-                '<tool_calls>\n[{"id":"call_1","name":"inspect_dataset","arguments":{}}]\n</tool_calls>\n'
+                '<tool_calls>\n[{"id":"call_1","name":"available_tool_name","arguments":{}}]\n</tool_calls>\n'
                 "</tool_call_format>\n"
                 "<final_answer_format>\n<final_answer>\n最终中文回复\n</final_answer>\n</final_answer_format>"
             ),

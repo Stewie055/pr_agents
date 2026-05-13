@@ -9,10 +9,15 @@ from semidiag.agent.llm import LLMResult, LLMStreamChunk, LLMToolCall
 from semidiag.tools import ToolRegistry
 
 
-def build_demo_csv_tool_registry() -> ToolRegistry:
-    from business.plugins.demo_csv_analysis import build_tools
+def build_csv_tool_registry() -> ToolRegistry:
+    from business.plugins.csv_file_analysis import register
+    from semidiag.plugins import CalibrationPluginRegistry, ToolScopeBuilder
 
-    return build_tools(None)
+    calibration_registry = CalibrationPluginRegistry()
+    register(calibration_registry)
+    return ToolScopeBuilder(common_registry=ToolRegistry(), calibration_registry=calibration_registry).build(
+        selected_plugin_ids=["csv.file_analysis"]
+    )
 
 
 class DeterministicLLMProvider:
@@ -35,8 +40,8 @@ class DeterministicLLMProvider:
             user_line = next((line for line in user_payload.splitlines() if line.startswith("User content:")), "")
             if "lt.example.offline_check" in user_payload and "offline" in user_line.lower():
                 plugin_ids = ["lt.example.offline_check"]
-            elif "demo.csv_diagnostics" in user_payload:
-                plugin_ids = ["demo.csv_diagnostics"]
+            elif "csv.file_analysis" in user_payload:
+                plugin_ids = ["csv.file_analysis"]
             else:
                 plugin_ids = []
             return LLMResult(

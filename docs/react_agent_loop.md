@@ -34,13 +34,7 @@ Router -> State Gate -> reason -> act -> observe -> reason ... -> finalize
 
 ## Observation Contract
 
-工具 Observation 必须包含足够的结构化信息：
-
-- `inspect_dataset`: columns、column_types、numeric_columns、row_count、preview。
-- `profile_dataset`: per-column profile、evidence summary。
-- `build_trend_chart`: render type、chart count、chart title、figure kind、display group、series names、point count。
-- `diagnose_performance`: possible causes、confidence、risk level、recommendations。
-- `generate_report`: section headings、format、MIME type、chart count、template engine。
+工具 Observation 必须包含足够的结构化信息，例如字段、统计摘要、趋势序列、诊断结论、证据引用、报告章节和下一步建议。具体 schema 由插件的 `ToolDefinition.output_schema` 和 `ToolResult.data` 定义。
 
 Observation 不应包含完整原始文件内容。
 

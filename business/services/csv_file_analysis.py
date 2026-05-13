@@ -20,10 +20,7 @@ from semidiag.vendor.ppt_template_sdk import ImageContent, PptTemplateEngine, Re
 
 
 class CSVDiagnosticService:
-    """Demo service for semiconductor equipment performance files.
-
-    Real projects should replace this with device-specific diagnostic packages.
-    """
+    """General CSV analysis service for uploaded tabular files."""
 
     def __init__(self, generated_root: Path | str = "var/generated") -> None:
         self.generated_root = Path(generated_root)

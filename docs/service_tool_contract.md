@@ -4,7 +4,7 @@
 
 Service 层放在 `business/services/`，不依赖 WebUI、Agent 或 LLM。它只接受结构化输入并返回结构化结果。
 
-当前非保密示例 `business/services/demo_csv_diagnostics.py` 提供：
+当前通用 CSV 分析 Service `business/services/csv_file_analysis.py` 提供：
 
 - `parse_dataset`
 - `profile_dataset`
@@ -13,7 +13,7 @@ Service 层放在 `business/services/`，不依赖 WebUI、Agent 或 LLM。它�
 - `generate_report`
 
 真实业务迁移时，应优先把 Qt 程序里的解析、清洗、建模、绘图和报告逻辑抽成 Service。图表应由 Service 使用 Matplotlib 或业务绘图库生成 PNG/SVG/PDF 等文件，再通过 Artifact 暴露给 Agent 和 WebUI；Agent 不直接绘图。
-Service 由 `business/plugins/*.py` 或 `business/tools/*.py` 调用。平台核心只关心 ToolDefinition、ToolResult、Artifact、Evidence 和 Observation。
+Service 由 `business/plugins/*.py` 或 `business/tools/*.py` 调用。平台核心只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
 解析类 Tool 会把 Service 提取出的结构化指标写入 `MetricRepository`；当前默认 SQLite 实现，生产目标是 ClickHouse adapter。
 长耗时 Service 调用后续应由任务队列承载，Tool/API 负责创建任务和暴露状态，不让请求线程长期阻塞。
 Workflow 重放复用 Tool Registry 执行步骤，因此 Tool 必须保持幂等或能安全重复生成新 Artifact/Trace。
@@ -50,26 +50,27 @@ Tool 返回不能只有自然语言，必须产生结构化 `Artifact`、`Eviden
 
 `dataset_id` 这类系统参数应放入 `system_injected_args`。Runtime 会自动注入，LLM 可见 schema 会隐藏这些字段，用户也不需要手动提供内部 ID。
 
-## Tool Observation
+## ToolResult Observation Payload
 
-每个 ToolResult 必须提供给 Agent loop 使用的结构化 Observation：
+每个 ToolResult 必须提供给 Agent loop 使用的结构化 observation payload：
 
-- `tool_name`
 - `summary`
 - `data`
 - `artifact_ids`
 - `evidence_ids`
 - `next_suggestions`
 
-Observation 面向 LLM 推理，不等同于前端展示文本。它应包含足够的结构化信息，例如字段名、列类型、统计摘要、趋势序列名、诊断结论和建议动作，但不应包含完整原始文件内容。
+Runtime 会补充 `tool_name` 并回填给 LLM。Observation 面向 LLM 推理，不等同于前端展示文本。它应包含足够的结构化信息，例如字段名、列类型、统计摘要、趋势序列名、诊断结论和建议动作，但不应包含完整原始文件内容。
 
-当前工具 Observation 约定：
+通用 CSV 插件的 ToolResult.data 约定：
 
 - `inspect_dataset`: columns、column types、numeric columns、row count、preview。
 - `profile_dataset`: per-column profile、evidence summary。
 - `build_trend_chart`: render type、chart count、chart title、figure kind、display group、series names、point count。
 - `diagnose_performance`: possible causes、confidence、risk level、recommendations。
 - `generate_report`: section headings、format、MIME type、chart count、template engine。
+
+业务插件可定义自己的 `data` schema，但必须写在 ToolDefinition.output_schema 和插件开发文档中，保证 LLM、Trace 调试台和前端可以理解。
 
 ## Artifact Types
 

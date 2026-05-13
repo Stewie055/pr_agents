@@ -254,7 +254,7 @@ class AgentRuntime:
                         "data": {},
                         "artifact_ids": [],
                         "evidence_ids": [],
-                        "next_suggestions": self._recovery_suggestions(call.name),
+                        "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
                     }
                 tool_observations.append(observation)
                 state.observations.append(observation)
@@ -369,7 +369,7 @@ class AgentRuntime:
                         "data": {},
                         "artifact_ids": [],
                         "evidence_ids": [],
-                        "next_suggestions": self._recovery_suggestions(call.name),
+                        "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
                     }
                     yield AgentStreamEvent(
                         event="tool_result",
@@ -415,9 +415,16 @@ class AgentRuntime:
             case_id=state.case_id,
             actor=state.actor,
             repository=self.repository,
+            case=self.repository.get_case(state.case_id),
+            datasets=self.repository.list_case_datasets(state.case_id),
+            active_dataset=self.repository.get_dataset(state.active_dataset_id) if state.active_dataset_id else None,
             metric_repository=self.metric_repository,
             generated_root=str(self.generated_root),
         )
+
+    def _tool_recovery_suggestions(self, tool_registry: ToolRegistry, tool_name: str) -> list[str]:
+        definition = tool_registry.get_tool(tool_name)
+        return list(definition.recovery_suggestions) if definition else []
 
     def _select_calibration_plugins(self, *, case_id: str, content: str) -> CalibrationSelection:
         datasets = self.repository.list_case_datasets(case_id)
@@ -509,31 +516,14 @@ class AgentRuntime:
         return prepared
 
     def _tool_result_observation(self, tool_name: str, tool_result) -> dict[str, Any]:
-        observation = tool_result.observation
-        if observation is None:
-            return {
-                "tool_name": tool_name,
-                "summary": tool_result.summary,
-                "data": tool_result.payload,
-                "artifact_ids": [artifact.id for artifact in tool_result.artifacts],
-                "evidence_ids": [evidence.id for evidence in tool_result.evidence],
-                "next_suggestions": [],
-            }
         return {
-            "tool_name": observation.tool_name,
-            "summary": observation.summary,
-            "data": observation.data,
-            "artifact_ids": observation.artifact_ids,
-            "evidence_ids": observation.evidence_ids,
-            "next_suggestions": observation.next_suggestions,
+            "tool_name": tool_name,
+            "summary": tool_result.summary,
+            "data": tool_result.data,
+            "artifact_ids": tool_result.artifact_ids or [artifact.id for artifact in tool_result.artifacts],
+            "evidence_ids": tool_result.evidence_ids or [evidence.id for evidence in tool_result.evidence],
+            "next_suggestions": tool_result.next_suggestions,
         }
-
-    def _recovery_suggestions(self, tool_name: str) -> list[str]:
-        if tool_name == "diagnose_performance":
-            return ["profile_dataset", "build_trend_chart"]
-        if tool_name in {"profile_dataset", "build_trend_chart"}:
-            return ["inspect_dataset", "parse_dataset"]
-        return ["inspect_dataset"]
 
     def _finalize_from_observations(self, state: AgentState) -> str:
         messages = list(state.messages)
@@ -647,7 +637,7 @@ class AgentRuntime:
             "可以使用 Markdown 和 emoji，但默认面向工程师，直接、简洁、可执行。"
             "不要默认展示内部 case id、dataset id、artifact id，也不要要求用户手动提供 dataset id；"
             "系统会自动使用当前案例最新上传的数据。"
-            "常规诊断优先调用 inspect_dataset 了解字段和样例，再调用 profile_dataset、build_trend_chart、diagnose_performance。"
+            "工具调用顺序应依据工具描述、上下文状态和上一轮 observation 决定。"
         )
         history = [
             {"role": item.role, "content": item.content}

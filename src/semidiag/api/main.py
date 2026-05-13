@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from business.file_classifiers.lt_log_metadata import detect_file_metadata
 from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMError, build_llm_provider
 from semidiag.config import load_llm_config
@@ -18,7 +19,6 @@ from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.metrics import SQLiteMetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 from semidiag.infrastructure.tasks import InProcessTaskQueue
-from semidiag.lt import detect_lt_log_metadata
 from semidiag.plugins import CalibrationPluginRegistry, CalibrationSelection, GenericEquipmentPlugin, LTEquipmentPlugin, PluginRegistry
 from semidiag.tools import ToolContext, build_default_registry
 
@@ -241,6 +241,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
             case_id=case_id,
             actor="workflow",
             repository=current.repository,
+            case=case,
+            datasets=datasets,
+            active_dataset=current.repository.get_dataset(active_dataset_id) if active_dataset_id else None,
             metric_repository=current.metric_repository,
             generated_root=str(current.generated_root),
         )
@@ -338,7 +341,11 @@ def create_app(state: AppState | None = None) -> FastAPI:
             content=content,
             content_type=file.content_type,
         )
-        metadata = detect_lt_log_metadata(dataset.filename)
+        metadata = detect_file_metadata(
+            filename=dataset.filename,
+            content_type=file.content_type,
+            content_preview=content[:4096],
+        )
         dataset.log_kind = metadata.log_kind  # type: ignore[assignment]
         dataset.scenario = metadata.scenario  # type: ignore[assignment]
         dataset.matched_rule = metadata.matched_rule

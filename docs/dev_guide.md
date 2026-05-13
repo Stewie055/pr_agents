@@ -70,7 +70,7 @@ bash scripts/check.sh
 
 1. 在 `business/services/` 中实现解析、清洗、指标画像、诊断、绘图和报告生成。
 2. 在 `business/plugins/` 中注册测校项或分析插件，manifest 声明场景、日志类型、型号、描述和 tool names。
-3. 在插件 `build_tools(context)` 中构造 ToolRegistry，把 Service 能力暴露为 plugin tools。
+3. 在插件中声明 `tools=[ToolSpec(ToolDefinition(...), handler)]`，框架负责筛选插件并注册本轮可用工具。
 4. 解析流程应输出结构化指标，Tool 负责写入 `MetricRepository`。
 5. 绘图能力在 Service 中生成文件 Artifact，不在 Agent 或前端中重算业务图。
 6. 报告能力优先使用 `ppt-template-sdk` 模板，占位符命名采用 `ph:<type>:<key>`。

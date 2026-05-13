@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from semidiag.tools.registry import ToolContext, ToolRegistry
+from semidiag.tools.registry import ToolContext, ToolRegistry, ToolSpec
 
 LogKind = Literal["LT-D", "LT-C", "LT-R"]
 LTScenario = Literal["offline_setup", "online_production"]
@@ -24,13 +23,14 @@ class CalibrationPluginManifest(BaseModel):
     max_tools: int = 6
 
 
-ToolProvider = Callable[[ToolContext | None], ToolRegistry]
-
-
 @dataclass
 class CalibrationPlugin:
     manifest: CalibrationPluginManifest
-    build_tools: ToolProvider
+    tools: list[ToolSpec] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.manifest.tool_names:
+            self.manifest.tool_names = [tool.definition.name for tool in self.tools]
 
 
 @dataclass
@@ -69,7 +69,7 @@ class ToolScopeBuilder:
             plugin = self.calibration_registry.get(plugin_id)
             if plugin is None:
                 continue
-            plugin_tools = plugin.build_tools(context)
+            plugin_tools = self._plugin_tools(plugin)
             manifest_names = set(plugin.manifest.tool_names)
             actual_names = {definition.name for definition in plugin_tools.list_tools()}
             missing = manifest_names - actual_names
@@ -88,3 +88,9 @@ class ToolScopeBuilder:
             return active
         allowed = {definition.name for definition in active.list_tools()[: self.max_tools]}
         return active.scoped(allowed)
+
+    def _plugin_tools(self, plugin: CalibrationPlugin) -> ToolRegistry:
+        registry = ToolRegistry()
+        for spec in plugin.tools:
+            registry.register(spec.definition, spec.handler)
+        return registry

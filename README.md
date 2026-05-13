@@ -25,7 +25,7 @@
 - LLM 工具调用支持 native tools 与 prompt-xml-json 文本协议两种模式
 - OpenAI-compatible LLMProvider 支持 `stream=true` token 增量输出和 streaming tool-call 累积
 - 独立 Trace 调试台，可查看 ReAct 步骤、工具轨迹、LLM 审计并导出脱敏 JSON
-- 通用 CSV 性能数据示例诊断
+- 通用 CSV 文件分析、绘图、诊断和 PPT 报告插件
 - Matplotlib PNG 图表 Artifact，多图图库、下载和全屏预览
 - PPTX 诊断报告 Artifact，优先使用 `ppt-template-sdk` 模板渲染并支持下载
 - 结构化 Artifact、Evidence、DiagnosisConclusion 和报告草稿
@@ -127,7 +127,7 @@ Full local quality gate:
 bash scripts/check.sh
 ```
 
-## Demo Flow
+## CSV Analysis Flow
 
 1. 在 WebUI 创建诊断案例。
 2. 上传包含数值指标的设备性能 CSV。

@@ -56,7 +56,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 
 ```xml
 <available_tools>
-[{"name":"inspect_dataset","description":"...","input_schema":{},"output_schema":{},"risk_level":"low","usage_hint":"..."}]
+[{"name":"available_tool_name","description":"...","input_schema":{},"output_schema":{},"risk_level":"low","usage_hint":"..."}]
 </available_tools>
 ```
 
@@ -64,7 +64,7 @@ SEMIDIAG_LLM_API_KEY=fill-your-deepseek-api-key
 
 ```xml
 <tool_calls>
-[{"id":"call_1","name":"inspect_dataset","arguments":{}}]
+[{"id":"call_1","name":"available_tool_name","arguments":{}}]
 </tool_calls>
 ```
 

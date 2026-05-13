@@ -7,12 +7,14 @@
 ```text
 business/
   services/
-    demo_csv_diagnostics.py
+    csv_file_analysis.py
   tools/
     lt_log_pool_tool.py
   plugins/
-    demo_csv_analysis.py
+    csv_file_analysis.py
     lt_example_calibration.py
+  file_classifiers/
+    lt_log_metadata.py
 ```
 
 ## Service Files
@@ -28,7 +30,7 @@ def register(registry):
     registry.register(ToolDefinition(...), handler)
 ```
 
-Tool 是 Agent 可调用的最小动作入口。handler 接收 `ToolContext` 和 `arguments`，返回 `ToolResult`。Tool 必须返回结构化 `ToolObservation`，不能只返回自然语言。
+Tool 是 Agent 可调用的最小动作入口。handler 接收 `ToolContext` 和 `arguments`，返回 `ToolResult`。`ToolResult` 就是回填给 ReAct loop 的结构化 observation payload，不能只返回自然语言。
 
 公共 Tool 会始终进入 common tool registry，例如日志池查看、知识检索、通用数据获取。平台默认 registry 不内置业务分析工具。
 
@@ -38,10 +40,15 @@ Tool 是 Agent 可调用的最小动作入口。handler 接收 `ToolContext` 和
 
 ```python
 def register(registry):
-    registry.register(CalibrationPlugin(manifest=..., build_tools=...))
+    registry.register(
+        CalibrationPlugin(
+            manifest=CalibrationPluginManifest(...),
+            tools=[ToolSpec(definition=ToolDefinition(...), handler=handler)],
+        )
+    )
 ```
 
-Plugin 是测校项业务包和懒加载 Tool Provider。服务启动时只读取 manifest，插件被选中后才调用 `build_tools(context)` 构建 plugin tools。
+Plugin 是测校项业务包。插件文件负责提供插件信息、工具信息和工具实现；框架负责读取 `CalibrationPlugin.tools`、按 manifest 做筛选，并把被选中插件的工具注册进本轮 active registry。业务开发者不需要实现 `build_tools`。
 
 Manifest 必须声明：
 
@@ -54,8 +61,88 @@ Manifest 必须声明：
 - `description`
 - `tool_names`
 
-Plugin tools 内部可以自由调用保密 Service、parser、cleaner、analyzer、plotter 和 reporter。平台只关心 ToolDefinition、ToolResult、Artifact、Evidence 和 Observation。
-Manifest 的 `tool_names` 必须和 `build_tools(context)` 实际返回的工具一致，否则构建 active registry 时会报错，避免 Agent 看到不存在的能力。
+Plugin tools 内部可以自由调用保密 Service、parser、cleaner、analyzer、plotter 和 reporter。平台只关心 ToolDefinition、ToolResult、Artifact 和 Evidence。
+`tool_names` 可省略，框架会从 `tools` 自动推导；如果显式声明，则必须和 `tools` 中的 ToolDefinition 名称一致，否则构建 active registry 时会报错，避免 Agent 看到不存在的能力。
+
+最小插件示例：
+
+```python
+from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+from semidiag.tools import ToolContext, ToolDefinition, ToolResult, ToolSpec
+
+
+def analyze(context: ToolContext, arguments: dict) -> ToolResult:
+    dataset = context.active_dataset
+    if dataset is None:
+        raise ValueError("This tool requires an active dataset.")
+    return ToolResult(
+        summary="Analysis completed.",
+        data={"filename": dataset.filename},
+        next_suggestions=[],
+    )
+
+
+def register(registry):
+    registry.register(
+        CalibrationPlugin(
+            manifest=CalibrationPluginManifest(
+                plugin_id="lt.example.measurement",
+                display_name="LT Example Measurement",
+                equipment_type="LT",
+                scenarios=["offline_setup"],
+                log_kinds=["LT-C"],
+                supported_models=["*"],
+                description="Example LT measurement analysis plugin.",
+            ),
+            tools=[
+                ToolSpec(
+                    definition=ToolDefinition(
+                        name="lt_example_measurement_analyze",
+                        description="Analyze the current LT measurement log.",
+                        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                        output_schema={"type": "object", "properties": {"status": {"type": "string"}}},
+                        origin="business:lt.example.measurement",
+                        phase="analyze",
+                        capability_tags=["lt", "measurement"],
+                    ),
+                    handler=analyze,
+                )
+            ],
+        )
+    )
+```
+
+## ToolContext
+
+所有 Tool 统一接收 `ToolContext`：
+
+- `case_id`: 当前诊断案例 ID，仅用于后端校验和落库，不应展示给用户。
+- `actor`: 当前调用者。
+- `repository`: 元数据仓储，可读取/保存 Artifact、Evidence、Trace、消息等。
+- `case`: 当前 `DiagnosticCase`，可能为空。
+- `datasets`: 当前案例全部数据集元数据。
+- `active_dataset`: 本轮自动选中的当前数据集。工具应优先使用它，而不是要求用户或 LLM 传 dataset id。
+- `metric_repository`: 结构化指标仓储，当前 SQLite，后续可换 ClickHouse adapter。
+- `generated_root`: 图表、报告等生成文件根目录。
+
+业务 Tool 必须校验数据归属当前案例。需要系统注入的参数应放到 `ToolDefinition.system_injected_args`，不要暴露给 LLM 或用户。
+
+## ToolResult
+
+Tool handler 返回：
+
+- `summary`: 简短结果摘要，供用户进度和 LLM observation 使用。
+- `data`: 结构化结果，写字段、统计、诊断结论、报告章节等，不放完整原始文件内容。
+- `artifacts`: 新产生的 Artifact 对象，Registry 会统一落库。
+- `evidence`: 新产生的 Evidence 对象，Registry 会统一落库。
+- `artifact_ids` / `evidence_ids`: 已有或新产生对象的引用。
+- `next_suggestions`: 失败恢复或下一步候选工具名，仅作为 LLM 提示，不是强制流程。
+
+`ToolResult` 和 observation 不再拆成两个重复结构；Runtime 会直接把 ToolResult 转成统一 observation 字典回填模型。
+
+## File Classifiers
+
+文件类型识别放在 `business/file_classifiers/`，例如 `lt_log_metadata.py`。LT 日志的 `log_kind` 和 `scenario` 当前由 `detect_file_metadata(filename, content_type, content_preview)` 返回；真实业务可根据文件名后缀、内容头、魔数或日志片段扩展该函数。
 
 ## Loading Rules
 

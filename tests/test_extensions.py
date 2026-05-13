@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
+import semidiag.tools as tools_module
+from business.file_classifiers.lt_log_metadata import detect_file_metadata
 from semidiag.agent import AgentRuntime
 from semidiag.agent.llm import LLMResult, LLMToolCall
 from semidiag.api.main import AppState, create_app
 from semidiag.extensions import ExtensionLoader
 from semidiag.plugins import CalibrationPluginRegistry, ToolScopeBuilder
-from semidiag.tools import ToolDefinition, ToolRegistry, ToolResult, build_default_registry
+from semidiag.tools import ToolDefinition, ToolRegistry, ToolResult, ToolSpec, build_default_registry
 
 
 def test_extension_loader_loads_business_tools(tmp_path):
@@ -45,25 +50,22 @@ def test_extension_loader_records_bad_extension_without_failing_startup(tmp_path
     assert "register" in (report.events[0].error or "")
 
 
-def test_calibration_plugin_registry_lists_manifests_without_building_tools(tmp_path):
+def test_calibration_plugin_registry_lists_manifests_without_running_tools(tmp_path):
     plugins_dir = tmp_path / "business" / "plugins"
     plugins_dir.mkdir(parents=True)
     (plugins_dir / "calibration.py").write_text(
         """
 from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
+from semidiag.tools import ToolDefinition, ToolResult, ToolSpec
 
-called = False
-
-def build_tools(context):
-    global called
-    called = True
+def lazy_tool(context, arguments):
     raise RuntimeError("tools should be lazy")
 
 def register(registry):
     registry.register(
         CalibrationPlugin(
             manifest=CalibrationPluginManifest(plugin_id="lt.lazy", display_name="Lazy", log_kinds=["LT-D"]),
-            build_tools=build_tools,
+            tools=[ToolSpec(ToolDefinition(name="lt_lazy", description="lazy"), lazy_tool)],
         )
     )
 """,
@@ -74,6 +76,7 @@ def register(registry):
     ExtensionLoader(tmp_path / "business").load_plugins(registry)
 
     assert registry.list_manifests()[0].plugin_id == "lt.lazy"
+    assert registry.list_manifests()[0].tool_names == ["lt_lazy"]
 
 
 def test_tool_scope_builder_exposes_only_common_and_selected_plugin_tools(tmp_path):
@@ -151,14 +154,6 @@ def test_system_injected_arguments_are_hidden_from_llm_schema():
 def test_tool_scope_builder_validates_manifest_tool_names():
     registry = CalibrationPluginRegistry()
 
-    def build_tools(context):
-        tools = ToolRegistry()
-        tools.register(
-            ToolDefinition(name="actual_tool", description="actual"),
-            lambda tool_context, arguments: ToolResult(summary="ok"),
-        )
-        return tools
-
     from semidiag.plugins import CalibrationPlugin, CalibrationPluginManifest
 
     registry.register(
@@ -168,7 +163,12 @@ def test_tool_scope_builder_validates_manifest_tool_names():
                 display_name="Bad",
                 tool_names=["missing_tool"],
             ),
-            build_tools=build_tools,
+            tools=[
+                ToolSpec(
+                    ToolDefinition(name="actual_tool", description="actual"),
+                    lambda tool_context, arguments: ToolResult(summary="ok"),
+                )
+            ],
         )
     )
 
@@ -180,6 +180,43 @@ def test_tool_scope_builder_validates_manifest_tool_names():
         assert "missing_tool" in str(exc)
     else:
         raise AssertionError("manifest/tool mismatch should fail")
+
+
+def test_tool_result_is_the_single_observation_payload():
+    result = ToolResult(summary="ok", data={"value": 1}, artifact_ids=["art_1"], next_suggestions=["next_tool"])
+
+    assert result.summary == "ok"
+    assert result.data == {"value": 1}
+    assert result.artifact_ids == ["art_1"]
+    assert result.next_suggestions == ["next_tool"]
+    assert not hasattr(tools_module, "ToolObservation")
+
+
+def test_framework_source_does_not_embed_csv_analysis_tools():
+    forbidden = {
+        "parse_dataset",
+        "inspect_dataset",
+        "profile_dataset",
+        "build_trend_chart",
+        "diagnose_performance",
+        "generate_report",
+    }
+    for path in Path("src/semidiag").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        matches = {name for name in forbidden if re.search(rf"\b{re.escape(name)}\b", text)}
+        assert not matches, f"{path} contains framework-level CSV tool fallback(s): {sorted(matches)}"
+
+
+def test_lt_file_metadata_detector_is_business_owned():
+    metadata = detect_file_metadata(
+        filename="tool_LT-D_20260513.log",
+        content_type="text/plain",
+        content_preview=b"sample",
+    )
+
+    assert metadata.log_kind == "LT-D"
+    assert metadata.scenario == "online_production"
+    assert metadata.matched_rule == "filename:LT-D"
 
 
 class ScopedToolProvider:

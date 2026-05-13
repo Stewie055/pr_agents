@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from semidiag.domain import AnalysisArtifact, AuditEvent, Evidence, ToolCallTrace
+from semidiag.domain import AnalysisArtifact, AuditEvent, DatasetRecord, DiagnosticCase, Evidence, ToolCallTrace
 from semidiag.infrastructure.metrics import MetricRepository
 from semidiag.infrastructure.repository import SQLiteRepository
 
@@ -23,6 +23,7 @@ class ToolDefinition(BaseModel):
     phase: str = "general"
     capability_tags: list[str] = Field(default_factory=list)
     system_injected_args: list[str] = Field(default_factory=list)
+    recovery_suggestions: list[str] = Field(default_factory=list)
 
     def llm_input_schema(self) -> dict[str, Any]:
         schema = dict(self.input_schema or {"type": "object", "properties": {}})
@@ -56,30 +57,31 @@ class ToolContext:
     case_id: str
     actor: str
     repository: SQLiteRepository
+    case: DiagnosticCase | None = None
+    datasets: list[DatasetRecord] = field(default_factory=list)
+    active_dataset: DatasetRecord | None = None
     metric_repository: MetricRepository | None = None
     generated_root: str = "var/generated"
 
 
 @dataclass
-class ToolObservation:
-    tool_name: str
+class ToolResult:
     summary: str
     data: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[AnalysisArtifact] = field(default_factory=list)
+    evidence: list[Evidence] = field(default_factory=list)
     artifact_ids: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
     next_suggestions: list[str] = field(default_factory=list)
 
 
-@dataclass
-class ToolResult:
-    summary: str
-    artifacts: list[AnalysisArtifact] = field(default_factory=list)
-    evidence: list[Evidence] = field(default_factory=list)
-    payload: dict[str, Any] = field(default_factory=dict)
-    observation: ToolObservation | None = None
-
-
 ToolHandler = Callable[[ToolContext, dict[str, Any]], ToolResult]
+
+
+@dataclass
+class ToolSpec:
+    definition: ToolDefinition
+    handler: ToolHandler
 
 
 class ToolRegistry:
@@ -132,6 +134,7 @@ class ToolRegistry:
                 "origin": definition.origin,
                 "phase": definition.phase,
                 "capability_tags": definition.capability_tags,
+                "recovery_suggestions": definition.recovery_suggestions,
                 "usage_hint": definition.description,
             }
             for definition in self.list_tools()

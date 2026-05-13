@@ -17,7 +17,7 @@ from semidiag.agent.llm import (
 from semidiag.config import LLMConfig
 from semidiag.infrastructure.file_store import LocalFileStore
 from semidiag.infrastructure.repository import SQLiteRepository
-from tests.fakes import build_demo_csv_tool_registry
+from tests.fakes import build_csv_tool_registry
 
 CSV_CONTENT = b"""timestamp,chamber_temperature,pressure,throughput
 1,70,10,100
@@ -40,7 +40,7 @@ def _runtime_with_provider(tmp_path, provider):
     )
     repository.add_dataset(dataset)
     return (
-        AgentRuntime(repository, llm=provider, registry=build_demo_csv_tool_registry(), generated_root=str(tmp_path / "generated")),
+        AgentRuntime(repository, llm=provider, registry=build_csv_tool_registry(), generated_root=str(tmp_path / "generated")),
         repository,
         case,
         dataset,

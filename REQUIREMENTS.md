@@ -40,7 +40,7 @@
 - SQLite repository。
 - Local file store。
 - Generic/LT equipment metadata plugin。
-- Demo CSV diagnostic service under `business/services` and plugin-scoped demo tools under `business/plugins`。
+- 通用 CSV file analysis service under `business/services` and plugin-scoped CSV tools under `business/plugins`。
 - 生产运行时仅支持 OpenAI-compatible LLM provider；自动化测试使用测试专用 fake provider。
 - Native tools / prompt-xml-json LLM tool mode。
 - LLMProvider streaming and Agent SSE event stream。

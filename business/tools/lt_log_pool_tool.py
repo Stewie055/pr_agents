@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from semidiag.tools import ToolDefinition, ToolObservation, ToolResult
+from semidiag.tools import ToolDefinition, ToolResult
 
 
 def register(registry):
@@ -28,11 +28,6 @@ def list_log_pool(context, arguments):
     ]
     return ToolResult(
         summary=f"Found {len(logs)} LT log file(s) in the current case.",
-        payload={"logs": logs},
-        observation=ToolObservation(
-            tool_name="lt_list_log_pool",
-            summary=f"Found {len(logs)} LT log file(s).",
-            data={"logs": logs},
-            next_suggestions=["select_calibration_plugin"],
-        ),
+        data={"logs": logs},
+        next_suggestions=["select_calibration_plugin"],
     )

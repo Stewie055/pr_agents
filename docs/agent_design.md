@@ -67,16 +67,7 @@ Router 由 LLM 完成，不使用规则分类器代替语义判断。`RouteDecis
 
 默认 `max_steps=6`。重复调用同一工具超过阈值时停止，避免死循环。工具执行错误不会直接终止请求，而是作为 error observation 回填给模型。
 
-当前 CSV 示例工具包括：
-
-- `inspect_dataset`: 查看字段、列类型、行数和样例。
-- `parse_dataset`: 解析并建立数据集 artifact。
-- `profile_dataset`: 统计画像并生成 evidence。
-- `build_trend_chart`: 使用 Matplotlib 生成趋势图 PNG 文件 Artifact。
-- `diagnose_performance`: 基于 evidence 生成辅助诊断。
-- `generate_report`: 使用 `ppt-template-sdk` 生成可下载的 PPTX 报告 Artifact。
-
-业务扩展工具不全局暴露给 Agent。测校插件被选中后，Runtime 才把该插件 `build_tools()` 返回的工具加入本轮 active registry。
+框架默认 registry 不内置业务分析工具。业务扩展工具不全局暴露给 Agent；测校插件被选中后，Runtime 才把该插件声明的 `ToolSpec` 加入本轮 active registry。通用 CSV 分析能力也作为 `business/plugins/csv_file_analysis.py` 插件提供，而不是框架 fallback。
 
 ## User Visible Artifacts
 
