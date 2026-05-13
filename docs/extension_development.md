@@ -200,13 +200,16 @@ Guardrail 失败会写入 ToolCallTrace error，并作为 error observation 回�
 
 ## Async Tool Tasks
 
-长耗时 Tool 应提交任务而不是阻塞请求线程。任务型 Tool 返回 `ToolResult(task_ids=[...], data={"task_id": ..., "task_status": ...})`，后台任务完成后自行写入 Artifact/Evidence。
+长耗时 Tool 应提交任务而不是阻塞请求线程。任务型 Tool 返回 `ToolResult(task_ids=[...], data={"task_id": ..., "task_status": ...})`，后台任务完成后自行写入 Artifact/Evidence，并把生成的 `artifact_ids`/`evidence_ids` 放进任务结果，方便前端刷新产物。
 
 当前通用 CSV 插件已将 `build_trend_chart` 和 `generate_report` 改为任务型工具。任务状态 API：
 
 - `GET /api/tasks`
+- `GET /api/tasks?case_id=<case_id>`
 - `GET /api/tasks/{task_id}`
 - `POST /api/tasks/{task_id}/cancel`
+
+任务记录持久化到 SQLite。服务重启时，未完成的 `pending/running` 任务会被标记为 `interrupted`，插件应允许用户重新触发对应分析或报告生成。
 
 ## File Classifiers
 

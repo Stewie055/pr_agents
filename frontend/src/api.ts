@@ -39,6 +39,23 @@ export type EvidenceItem = {
   created_at?: string;
 };
 
+export type TaskRecord = {
+  id: string;
+  case_id?: string | null;
+  name: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  payload?: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  artifact_ids?: string[];
+  evidence_ids?: string[];
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
 export type AgentStep = {
   id: string;
   step_index: number;
@@ -77,6 +94,7 @@ export type CaseSnapshot = {
   messages: AgentMessage[];
   artifacts: Artifact[];
   evidence?: EvidenceItem[];
+  tasks?: TaskRecord[];
   tool_traces: ToolTrace[];
   agent_steps?: AgentStep[];
 };
@@ -124,6 +142,18 @@ export async function createCase(title: string): Promise<DiagnosticCase> {
 export async function getCase(caseId: string): Promise<CaseSnapshot> {
   const response = await fetch(`/api/cases/${caseId}`);
   return parseResponse<CaseSnapshot>(response);
+}
+
+export async function listTasks(caseId?: string): Promise<TaskRecord[]> {
+  const query = caseId ? `?case_id=${encodeURIComponent(caseId)}` : "";
+  const response = await fetch(`/api/tasks${query}`);
+  const payload = await parseResponse<{ tasks: TaskRecord[] }>(response);
+  return payload.tasks;
+}
+
+export async function cancelTask(taskId: string): Promise<TaskRecord> {
+  const response = await fetch(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+  return parseResponse<TaskRecord>(response);
 }
 
 export async function uploadDataset(caseId: string, file: File): Promise<{ id: string; filename: string }> {

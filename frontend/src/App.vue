@@ -57,8 +57,10 @@ async function upload(file: File) {
     <WorkspacePanel
       :artifacts="session.snapshot.value?.artifacts ?? []"
       :evidence="session.snapshot.value?.evidence ?? []"
+      :tasks="session.tasks.value"
       :report-loading="session.reportLoading.value"
       :has-dataset="session.hasDataset.value"
+      @cancel-task="session.cancelTaskById"
       @generate-report="session.generateReport"
     />
   </main>

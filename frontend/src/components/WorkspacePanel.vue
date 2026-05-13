@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { Artifact, EvidenceItem } from "../api";
+import type { Artifact, EvidenceItem, TaskRecord } from "../api";
 import ChartGallery from "./ChartGallery.vue";
 import DiagnosisSummary from "./DiagnosisSummary.vue";
 import ReportPanel from "./ReportPanel.vue";
+import TaskPanel from "./TaskPanel.vue";
 
 const props = defineProps<{
   artifacts: Artifact[];
   evidence: EvidenceItem[];
+  tasks: TaskRecord[];
   reportLoading: boolean;
   hasDataset: boolean;
 }>();
 
-const emit = defineEmits<{ generateReport: [] }>();
+const emit = defineEmits<{ generateReport: []; cancelTask: [taskId: string] }>();
 const activeTab = ref<"diagnosis" | "charts" | "report">("diagnosis");
 
 const charts = computed(() =>
@@ -39,6 +41,7 @@ const reportSections = computed(() => (report.value?.data?.sections as Array<{ h
     </nav>
 
     <div class="workspace-panel-body">
+      <TaskPanel :tasks="tasks" @cancel="emit('cancelTask', $event)" />
       <DiagnosisSummary v-if="activeTab === 'diagnosis'" :diagnosis="diagnosis" :evidence="evidence" />
       <ChartGallery v-else-if="activeTab === 'charts'" :charts="charts" />
       <ReportPanel

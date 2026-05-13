@@ -6,9 +6,10 @@
 
 ## Key Work
 
-- 使用进程内任务队列实现解析、绘图、PPT、批处理等长任务的状态管理。当前 `InProcessTaskQueue` 基础设施已完成。
-- 增加任务状态 API：pending、running、succeeded、failed、cancelled。当前 `GET /api/tasks` 和 `GET /api/tasks/{task_id}` 已完成。
+- 使用进程内 worker 执行解析、绘图、PPT、批处理等长任务，任务记录持久化到 SQLite。当前 `InProcessTaskQueue(repository=...)` 基础设施已完成。
+- 增加任务状态 API：pending、running、succeeded、failed、cancelled、interrupted。当前 `GET /api/tasks`、`GET /api/tasks?case_id=...`、`GET /api/tasks/{task_id}` 和取消接口已完成。
 - 图表生成和 PPT 报告生成已作为首批任务型工具接入任务队列。
+- 前端工作台已展示当前案例任务，并在任务完成后自动刷新图表/PPT Artifact。
 - Workflow 首版支持从一次诊断沉淀为步骤模板，并手动触发重放。当前 Tool trace 到 `WorkflowTemplate` 以及手动重放 API 已完成。
 - 中期记忆持久化到 SQLite。当前 `MemoryRecord` 和 `MemoryService(repository)` 已完成。
 - 长期知识库提供抽象接口，默认本地实现支持文档摘要检索和来源引用。当前 SQLite 本地知识记录和关键词检索 API 已完成。

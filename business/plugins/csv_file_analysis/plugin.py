@@ -120,7 +120,13 @@ def _active_dataset(context: ToolContext):
 def _submit_task(context: ToolContext, *, name: str, payload: dict[str, Any], handler):
     if context.task_queue is None:
         raise ValueError("Task queue is not available for asynchronous tool execution.")
-    return context.task_queue.submit(name=name, payload=payload, handler=handler)
+    return context.task_queue.submit(
+        name=name,
+        payload=payload,
+        handler=handler,
+        case_id=context.case_id,
+        created_by=context.actor,
+    )
 
 
 def parse_dataset(context: ToolContext, arguments: dict[str, Any]) -> ToolResult:

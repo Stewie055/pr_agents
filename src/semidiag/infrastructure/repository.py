@@ -18,9 +18,11 @@ from semidiag.domain import (
     KnowledgeRecord,
     LLMAuditEvent,
     MemoryRecord,
+    TaskRecord,
     ToolCallTrace,
     WorkflowTemplate,
 )
+from semidiag.domain.models import utc_now
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -187,6 +189,32 @@ class SQLiteRepository:
     def list_case_tool_traces(self, case_id: str) -> list[ToolCallTrace]:
         return [item for item in self._list("tool_trace", ToolCallTrace) if item.case_id == case_id]
 
+    def upsert_task(self, task: TaskRecord) -> TaskRecord:
+        self._put("task", task)
+        return task
+
+    def get_task(self, task_id: str) -> TaskRecord | None:
+        return self._get("task", task_id, TaskRecord)
+
+    def list_tasks(self) -> list[TaskRecord]:
+        return self._list("task", TaskRecord)
+
+    def list_case_tasks(self, case_id: str) -> list[TaskRecord]:
+        return [item for item in self.list_tasks() if item.case_id == case_id]
+
+    def mark_unfinished_tasks_interrupted(self) -> int:
+        interrupted = 0
+        for task in self.list_tasks():
+            if task.status not in {"pending", "running"}:
+                continue
+            task.status = "interrupted"
+            task.error = task.error or "Task was interrupted because the service restarted before it completed."
+            task.updated_at = utc_now()
+            task.finished_at = task.finished_at or task.updated_at
+            self.upsert_task(task)
+            interrupted += 1
+        return interrupted
+
     def add_agent_step_trace(self, trace: AgentStepTrace) -> AgentStepTrace:
         self._put("agent_step", trace)
         return trace
@@ -219,6 +247,7 @@ class SQLiteRepository:
             "memory": [item for item in self._list("memory", MemoryRecord) if item.case_id == case_id],
             "artifacts": self.list_case_artifacts(case_id),
             "evidence": self.list_case_evidence(case_id),
+            "tasks": self.list_case_tasks(case_id),
             "tool_traces": self.list_case_tool_traces(case_id),
             "agent_steps": self.list_case_agent_step_traces(case_id),
             "audit_events": self.list_case_audit_events(case_id),

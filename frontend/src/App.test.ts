@@ -29,6 +29,7 @@ function caseSnapshot(overrides: Record<string, unknown> = {}) {
     messages: [],
     artifacts: [],
     evidence: [],
+    tasks: [],
     tool_traces: [],
     ...overrides
   };
@@ -121,6 +122,94 @@ describe("App", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/cases/case_1/messages/stream", expect.objectContaining({ method: "POST" }));
     expect(wrapper.text()).toContain("完成字段检查");
     expect(wrapper.text()).toContain("诊断完成");
+  });
+
+  it("shows case tasks and cancels pending tasks", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" }))
+      .mockResolvedValueOnce(jsonResponse(caseSnapshot({
+        tasks: [{ id: "task_pending", name: "csv.generate_report", status: "pending", artifact_ids: [] }]
+      })))
+      .mockResolvedValueOnce(jsonResponse({ id: "task_pending", name: "csv.generate_report", status: "cancelled" }))
+      .mockResolvedValueOnce(jsonResponse({
+        tasks: [{ id: "task_pending", name: "csv.generate_report", status: "cancelled", artifact_ids: [] }]
+      }))
+      .mockResolvedValueOnce(jsonResponse(caseSnapshot({
+        tasks: [{ id: "task_pending", name: "csv.generate_report", status: "cancelled", artifact_ids: [] }]
+      })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await wrapper.find("button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("生成 PPT 报告");
+    expect(wrapper.text()).toContain("排队中");
+    await wrapper.find(".task-list button").trigger("click");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/tasks/task_pending/cancel", { method: "POST" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/tasks?case_id=case_1");
+    expect(wrapper.text()).toContain("已取消");
+  });
+
+  it("refreshes tasks and artifacts after streamed task results", async () => {
+    const initialSnapshot = caseSnapshot({ datasets: [{ id: "ds_secret123", filename: "performance.csv" }] });
+    const completedSnapshot = caseSnapshot({
+      datasets: [{ id: "ds_secret123", filename: "performance.csv" }],
+      tasks: [{ id: "task_chart", name: "csv.build_trend_chart", status: "succeeded", artifact_ids: ["art_chart_secret"] }],
+      artifacts: [
+        {
+          id: "art_chart_secret",
+          kind: "chart",
+          title: "Temperature trend",
+          summary: "Generated Matplotlib trend plot.",
+          data: { render_type: "image", display_group: "Metric Trend", order: 1 }
+        }
+      ]
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/cases") {
+        return Promise.resolve(jsonResponse({ id: "case_1", title: "demo", equipment_type: "generic_semiconductor_tool", status: "open" }));
+      }
+      if (url === "/api/cases/case_1") {
+        return Promise.resolve(jsonResponse(completedSnapshot));
+      }
+      if (url === "/api/tasks?case_id=case_1") {
+        return Promise.resolve(jsonResponse({
+          tasks: [{ id: "task_chart", name: "csv.build_trend_chart", status: "succeeded", artifact_ids: ["art_chart_secret"] }]
+        }));
+      }
+      if (url === "/api/cases/case_1/messages/stream") {
+        return Promise.resolve(streamResponse([
+          { event: "started", data: { message: "开始处理请求" } },
+          { event: "tool_result", data: { tool_name: "build_trend_chart", summary: "submitted", task_ids: ["task_chart"] } },
+          {
+            event: "final",
+            data: {
+              message: { id: "msg_1", role: "assistant", content: "已提交图表任务" },
+              summary: "已提交图表任务",
+              artifacts: [],
+              tool_traces: []
+            }
+          }
+        ]));
+      }
+      return Promise.resolve(jsonResponse(initialSnapshot));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await wrapper.find("button").trigger("click");
+    await flushPromises();
+    await wrapper.find(".composer button").trigger("click");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/tasks?case_id=case_1");
+    expect(wrapper.text()).toContain("已生成 1 个产物");
+    await wrapper.findAll("button").find((button) => button.text() === "图表")?.trigger("click");
+    expect(wrapper.text()).toContain("Temperature trend");
   });
 
   it("renders chart gallery and report download assets", async () => {

@@ -100,13 +100,15 @@ bash scripts/check.sh
 
 ## Tasks
 
-`InProcessTaskQueue` 是首版长任务基础设施，当前用于本地部署和测试。任务状态 API：
+`InProcessTaskQueue` 是当前长任务执行器，任务记录持久化到 SQLite。服务启动时会把上次未完成的 `pending/running` 任务标记为 `interrupted`，避免重启后静默丢任务。任务状态 API：
 
 - `GET /api/tasks`
+- `GET /api/tasks?case_id=<case_id>`
 - `GET /api/tasks/{task_id}`
+- `POST /api/tasks/{task_id}/cancel`
 
-后续解析、绘图、PPT 和 Workflow 批处理应逐步迁移到该接口背后的任务抽象。
 当前通用 CSV 插件中的图表生成和 PPT 报告生成已经通过任务队列执行。
+前端工作台会展示当前案例任务，轮询刷新运行中任务，并在任务终态后刷新图表和 PPT 产物。
 
 ## Knowledge
 

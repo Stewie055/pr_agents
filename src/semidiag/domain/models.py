@@ -161,3 +161,20 @@ class LLMAuditEvent(BaseModel):
     error: str | None = None
     duration_ms: int = 0
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class TaskRecord(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("task"))
+    case_id: str | None = None
+    name: str
+    status: Literal["pending", "running", "succeeded", "failed", "cancelled", "interrupted"] = "pending"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    artifact_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    created_by: str = "system"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

@@ -1,9 +1,11 @@
 import { computed, ref } from "vue";
 import {
+  cancelTask,
   createCase,
   exportCaseTrace,
   getCase,
   getCaseTrace,
+  listTasks,
   streamMessage,
   uploadDataset,
   type AgentMessage,
@@ -32,10 +34,13 @@ export function useCaseSession() {
   const debugMode = ref(new URLSearchParams(window.location.search).get("debug") === "trace");
   const transientMessages = ref<AgentMessage[]>([]);
   const progressItems = ref<ProgressItem[]>([]);
+  let taskPollTimer: number | null = null;
 
   const activeDatasetId = computed(() => snapshot.value?.datasets.at(-1)?.id);
   const latestDatasetName = computed(() => snapshot.value?.datasets.at(-1)?.filename);
   const hasDataset = computed(() => Boolean(activeDatasetId.value));
+  const tasks = computed(() => snapshot.value?.tasks ?? []);
+  const hasRunningTasks = computed(() => tasks.value.some((task) => task.status === "pending" || task.status === "running"));
   const displayMessages = computed(() => [...(snapshot.value?.messages ?? []), ...transientMessages.value]);
   const caseStateText = computed(() => {
     if (!snapshot.value) {
@@ -64,6 +69,7 @@ export function useCaseSession() {
       snapshot.value = await getCase(diagnosticCase.id);
       transientMessages.value = [];
       progressItems.value = [];
+      updateTaskPolling();
     } catch (err) {
       error.value = err instanceof Error ? err.message : "创建案例失败";
     } finally {
@@ -78,6 +84,7 @@ export function useCaseSession() {
       const caseId = await ensureCase();
       await uploadDataset(caseId, file);
       snapshot.value = await getCase(caseId);
+      updateTaskPolling();
     } catch (err) {
       error.value = err instanceof Error ? err.message : "上传失败";
     } finally {
@@ -140,6 +147,10 @@ export function useCaseSession() {
     if (event.event === "tool_result") {
       const taskDetail = event.data.task_ids?.length ? `任务：${event.data.task_ids.join(", ")}` : event.data.summary;
       completeRunning(event.data.error ? "error" : "done", taskDetail);
+      if (event.data.task_ids?.length) {
+        void refreshTasks();
+        startTaskPolling();
+      }
       return;
     }
     if (event.event === "artifact_created") {
@@ -161,6 +172,7 @@ export function useCaseSession() {
       getCase((snapshot.value as CaseSnapshot).case.id).then((fresh) => {
         snapshot.value = fresh;
         transientMessages.value = [];
+        updateTaskPolling();
       });
       trace.value = null;
       return;
@@ -207,6 +219,61 @@ export function useCaseSession() {
       error.value = err instanceof Error ? err.message : "加载 Trace 失败";
     } finally {
       traceLoading.value = false;
+    }
+  }
+
+  async function refreshTasks() {
+    if (!snapshot.value) {
+      return;
+    }
+    const caseId = snapshot.value.case.id;
+    const freshTasks = await listTasks(caseId);
+    snapshot.value = {
+      ...snapshot.value,
+      tasks: freshTasks
+    };
+    if (!freshTasks.some((task) => task.status === "pending" || task.status === "running")) {
+      const fresh = await getCase(caseId);
+      snapshot.value = fresh;
+      stopTaskPolling();
+    }
+  }
+
+  function startTaskPolling() {
+    if (taskPollTimer !== null) {
+      return;
+    }
+    taskPollTimer = window.setInterval(() => {
+      refreshTasks().catch((err) => {
+        error.value = err instanceof Error ? err.message : "刷新任务状态失败";
+        stopTaskPolling();
+      });
+    }, 1000);
+  }
+
+  function stopTaskPolling() {
+    if (taskPollTimer === null) {
+      return;
+    }
+    window.clearInterval(taskPollTimer);
+    taskPollTimer = null;
+  }
+
+  function updateTaskPolling() {
+    if (hasRunningTasks.value) {
+      startTaskPolling();
+    } else {
+      stopTaskPolling();
+    }
+  }
+
+  async function cancelTaskById(taskId: string) {
+    error.value = "";
+    try {
+      await cancelTask(taskId);
+      await refreshTasks();
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : "取消任务失败";
     }
   }
 
@@ -257,6 +324,7 @@ export function useCaseSession() {
     trace,
     debugMode,
     progressItems,
+    tasks,
     activeDatasetId,
     latestDatasetName,
     hasDataset,
@@ -266,6 +334,7 @@ export function useCaseSession() {
     uploadFile,
     sendCurrentMessage,
     generateReport,
+    cancelTaskById,
     loadTrace,
     openTraceDebug,
     closeTraceDebug,

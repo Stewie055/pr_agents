@@ -49,7 +49,7 @@ class AppState:
         root_path = Path(root)
         self.repository = SQLiteRepository(root_path / "semidiag.sqlite3")
         self.metric_repository = SQLiteMetricRepository(root_path / "metrics.sqlite3")
-        self.task_queue = InProcessTaskQueue()
+        self.task_queue = InProcessTaskQueue(repository=self.repository)
         self.file_store = LocalFileStore(root_path / "files")
         self.generated_root = root_path / "generated"
         llm_provider = build_llm_provider(load_llm_config())
@@ -196,8 +196,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
         return current.extension_loader.report.model_dump()
 
     @app.get("/api/tasks")
-    def list_tasks(current=Depends(get_state)):
-        return {"tasks": [task.model_dump(mode="json") for task in current.task_queue.list_tasks()]}
+    def list_tasks(case_id: str | None = None, current=Depends(get_state)):
+        return {"tasks": [task.model_dump(mode="json") for task in current.task_queue.list_tasks(case_id=case_id)]}
 
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str, current=Depends(get_state)):

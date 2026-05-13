@@ -332,6 +332,7 @@ h3 {
 .diagnosis-card,
 .evidence-list article,
 .report article,
+.task-list li,
 .trace-timeline li,
 .llm-event {
   border: 1px solid #dce4e7;
@@ -353,6 +354,65 @@ h3 {
 
 .diagnosis-card dd {
   margin: 2px 0 0;
+}
+
+.task-panel {
+  margin-bottom: 14px;
+}
+
+.task-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.task-list li {
+  display: grid;
+  gap: 6px;
+}
+
+.task-list li > div {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.task-list small {
+  border-radius: 999px;
+  background: #edf3f5;
+  color: #46666f;
+  padding: 3px 8px;
+}
+
+.task-list li.running small,
+.task-list li.pending small {
+  background: #e7f2f7;
+  color: #176b87;
+}
+
+.task-list li.succeeded small {
+  background: #e4f2e9;
+  color: #2f7d45;
+}
+
+.task-list li.failed small,
+.task-list li.interrupted small {
+  background: #f8e7e4;
+  color: #a33b2f;
+}
+
+.task-list p {
+  color: #5f7f88;
+  font-size: 13px;
+  margin: 0;
+}
+
+.task-list button {
+  justify-self: start;
+  padding: 6px 9px;
 }
 
 .chart-gallery {
