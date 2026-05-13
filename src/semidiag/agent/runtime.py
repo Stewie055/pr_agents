@@ -55,6 +55,13 @@ class AgentState:
     stop_reason: str | None = None
 
 
+@dataclass
+class ReActStepOutput:
+    events: list[AgentStreamEvent]
+    deltas: list[str]
+    final_content: str | None = None
+
+
 class AgentRuntime:
     max_steps = 6
     max_repeated_tool_calls = 2
@@ -205,7 +212,6 @@ class AgentRuntime:
         )
 
     def _run_react_loop(self, state: AgentState) -> AgentTurnResult:
-        context = self._tool_context(state)
         tool_registry = state.tool_registry or self.registry
         tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
@@ -214,76 +220,16 @@ class AgentRuntime:
         self._record_route_decision(state)
 
         for step_index in range(1, self.max_steps + 1):
-            state.step_count = step_index
-            started = perf_counter()
-            result = self._call_llm_for_plan(case_id=state.case_id, messages=state.messages, tools=tools)
-            duration_ms = int((perf_counter() - started) * 1000)
-
-            if not result.tool_calls:
-                final_content = result.content
-                state.stop_reason = "final_answer"
-                self._record_agent_step(
-                    case_id=state.case_id,
-                    step_index=step_index,
-                    phase="finalize",
-                    llm_metadata=self._step_llm_metadata(result.metadata),
-                    stop_reason=state.stop_reason,
-                    duration_ms=duration_ms,
-                )
-                break
-
-            assistant_tool_message = self.llm.assistant_plan_message(result)
-            state.messages.append(assistant_tool_message)
-            tool_observations: list[dict[str, Any]] = []
-            observation_messages: list[dict[str, Any]] = []
-
-            for call in result.tool_calls:
-                if tool_registry.get_tool(call.name) is None:
-                    raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
-                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
-                call_counts[signature] = call_counts.get(signature, 0) + 1
-                if call_counts[signature] > self.max_repeated_tool_calls:
-                    state.stop_reason = "repeated_tool_call"
-                    final_content = self._repeated_tool_call_message()
-                    break
-
-                arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
-                try:
-                    tool_result = tool_registry.run(call.name, context, arguments)
-                    observation = self._tool_result_observation(call.name, tool_result)
-                except Exception as exc:
-                    observation = {
-                        "tool_name": call.name,
-                        "summary": f"Tool {call.name} failed: {exc}",
-                        "error": str(exc),
-                        "data": {},
-                        "artifact_ids": [],
-                        "evidence_ids": [],
-                        "task_ids": [],
-                        "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
-                    }
-                tool_observations.append(observation)
-                state.observations.append(observation)
-                observation_messages.append(
-                    {"tool_call_id": call.id, "tool_name": call.name, "observation": observation}
-                )
-
-            self._record_agent_step(
-                case_id=state.case_id,
+            output = self._execute_react_step(
+                state=state,
                 step_index=step_index,
-                phase="observe",
-                tool_calls=[
-                    {"id": call.id, "name": call.name, "arguments": call.arguments}
-                    for call in result.tool_calls
-                ],
-                observations=tool_observations,
-                llm_metadata=self._step_llm_metadata(result.metadata),
-                stop_reason=state.stop_reason,
-                duration_ms=duration_ms,
+                tools=tools,
+                tool_registry=tool_registry,
+                call_counts=call_counts,
+                stream=False,
             )
-
-            state.messages.extend(self.llm.tool_observation_messages(observation_messages))
-            if final_content:
+            if output.final_content:
+                final_content = output.final_content
                 break
 
         if final_content is None:
@@ -294,7 +240,6 @@ class AgentRuntime:
         return self._persist_react_result(state=state, content_out=content_out)
 
     def _run_react_loop_stream(self, state: AgentState) -> Iterator[AgentStreamEvent]:
-        context = self._tool_context(state)
         tool_registry = state.tool_registry or self.registry
         tools = self.llm.tool_specs(tool_registry)
         call_counts: dict[str, int] = {}
@@ -304,107 +249,20 @@ class AgentRuntime:
         self._record_route_decision(state)
 
         for step_index in range(1, self.max_steps + 1):
-            state.step_count = step_index
-            started = perf_counter()
-            result, deltas = self._call_llm_for_plan_stream(case_id=state.case_id, messages=state.messages, tools=tools)
-            duration_ms = int((perf_counter() - started) * 1000)
-            for delta in deltas:
+            output = self._execute_react_step(
+                state=state,
+                step_index=step_index,
+                tools=tools,
+                tool_registry=tool_registry,
+                call_counts=call_counts,
+                stream=True,
+            )
+            for delta in output.deltas:
                 streamed_final_content += delta
                 yield AgentStreamEvent(event="message_delta", data={"delta": delta})
-
-            if not result.tool_calls:
-                final_content = result.content or streamed_final_content
-                state.stop_reason = "final_answer"
-                self._record_agent_step(
-                    case_id=state.case_id,
-                    step_index=step_index,
-                    phase="finalize",
-                    llm_metadata=self._step_llm_metadata(result.metadata),
-                    stop_reason=state.stop_reason,
-                    duration_ms=duration_ms,
-                )
-                break
-
-            assistant_tool_message = self.llm.assistant_plan_message(result)
-            state.messages.append(assistant_tool_message)
-            tool_observations: list[dict[str, Any]] = []
-            observation_messages: list[dict[str, Any]] = []
-
-            for call in result.tool_calls:
-                if tool_registry.get_tool(call.name) is None:
-                    raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
-                signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
-                call_counts[signature] = call_counts.get(signature, 0) + 1
-                if call_counts[signature] > self.max_repeated_tool_calls:
-                    state.stop_reason = "repeated_tool_call"
-                    final_content = self._repeated_tool_call_message()
-                    break
-
-                arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
-                yield AgentStreamEvent(event="tool_start", data={"tool_name": call.name})
-                try:
-                    tool_result = tool_registry.run(call.name, context, arguments)
-                    observation = self._tool_result_observation(call.name, tool_result)
-                    yield AgentStreamEvent(
-                        event="tool_result",
-                        data={
-                            "tool_name": call.name,
-                            "summary": observation.get("summary") or tool_result.summary,
-                            "artifact_ids": observation.get("artifact_ids", []),
-                            "evidence_ids": observation.get("evidence_ids", []),
-                            "task_ids": observation.get("task_ids", []),
-                        },
-                    )
-                    for artifact in tool_result.artifacts:
-                        yield AgentStreamEvent(
-                            event="artifact_created",
-                            data={
-                                "artifact": {
-                                    "id": artifact.id,
-                                    "kind": artifact.kind,
-                                    "title": artifact.title,
-                                    "summary": artifact.summary,
-                                    "data": artifact.data,
-                                }
-                            },
-                        )
-                except Exception as exc:
-                    observation = {
-                        "tool_name": call.name,
-                        "summary": f"Tool {call.name} failed: {exc}",
-                        "error": str(exc),
-                        "data": {},
-                        "artifact_ids": [],
-                        "evidence_ids": [],
-                        "task_ids": [],
-                        "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
-                    }
-                    yield AgentStreamEvent(
-                        event="tool_result",
-                        data={"tool_name": call.name, "summary": observation["summary"], "error": str(exc)},
-                    )
-                tool_observations.append(observation)
-                state.observations.append(observation)
-                observation_messages.append(
-                    {"tool_call_id": call.id, "tool_name": call.name, "observation": observation}
-                )
-
-            self._record_agent_step(
-                case_id=state.case_id,
-                step_index=step_index,
-                phase="observe",
-                tool_calls=[
-                    {"id": call.id, "name": call.name, "arguments": call.arguments}
-                    for call in result.tool_calls
-                ],
-                observations=tool_observations,
-                llm_metadata=self._step_llm_metadata(result.metadata),
-                stop_reason=state.stop_reason,
-                duration_ms=duration_ms,
-            )
-
-            state.messages.extend(self.llm.tool_observation_messages(observation_messages))
-            if final_content:
+            yield from output.events
+            if output.final_content:
+                final_content = output.final_content
                 break
 
         if final_content is None:
@@ -417,6 +275,120 @@ class AgentRuntime:
             for part in self._split_stream_text(content_out):
                 yield AgentStreamEvent(event="message_delta", data={"delta": part})
         yield self._react_final_event(state=state, content_out=content_out)
+
+    def _execute_react_step(
+        self,
+        *,
+        state: AgentState,
+        step_index: int,
+        tools: list[dict[str, Any]],
+        tool_registry: ToolRegistry,
+        call_counts: dict[str, int],
+        stream: bool,
+    ) -> ReActStepOutput:
+        state.step_count = step_index
+        started = perf_counter()
+        deltas: list[str] = []
+        if stream:
+            result, deltas = self._call_llm_for_plan_stream(case_id=state.case_id, messages=state.messages, tools=tools)
+        else:
+            result = self._call_llm_for_plan(case_id=state.case_id, messages=state.messages, tools=tools)
+        duration_ms = int((perf_counter() - started) * 1000)
+
+        if not result.tool_calls:
+            state.stop_reason = "final_answer"
+            self._record_agent_step(
+                case_id=state.case_id,
+                step_index=step_index,
+                phase="finalize",
+                llm_metadata=self._step_llm_metadata(result.metadata),
+                stop_reason=state.stop_reason,
+                duration_ms=duration_ms,
+            )
+            return ReActStepOutput(events=[], deltas=deltas, final_content=result.content or "".join(deltas))
+
+        state.messages.append(self.llm.assistant_plan_message(result))
+        events: list[AgentStreamEvent] = []
+        tool_observations: list[dict[str, Any]] = []
+        observation_messages: list[dict[str, Any]] = []
+        final_content: str | None = None
+        context = self._tool_context(state)
+
+        for call in result.tool_calls:
+            if tool_registry.get_tool(call.name) is None:
+                raise LLMError(f"LLM requested unknown tool: {call.name}", status_code=502)
+            signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
+            call_counts[signature] = call_counts.get(signature, 0) + 1
+            if call_counts[signature] > self.max_repeated_tool_calls:
+                state.stop_reason = "repeated_tool_call"
+                final_content = self._repeated_tool_call_message()
+                break
+
+            arguments = self._prepare_tool_arguments(tool_registry, call.name, call.arguments, state.active_dataset_id)
+            events.append(AgentStreamEvent(event="tool_start", data={"tool_name": call.name}))
+            try:
+                tool_result = tool_registry.run(call.name, context, arguments)
+                observation = self._tool_result_observation(call.name, tool_result)
+                events.append(
+                    AgentStreamEvent(
+                        event="tool_result",
+                        data={
+                            "tool_name": call.name,
+                            "summary": observation.get("summary") or tool_result.summary,
+                            "artifact_ids": observation.get("artifact_ids", []),
+                            "evidence_ids": observation.get("evidence_ids", []),
+                            "task_ids": observation.get("task_ids", []),
+                        },
+                    )
+                )
+                for artifact in tool_result.artifacts:
+                    events.append(
+                        AgentStreamEvent(
+                            event="artifact_created",
+                            data={
+                                "artifact": {
+                                    "id": artifact.id,
+                                    "kind": artifact.kind,
+                                    "title": artifact.title,
+                                    "summary": artifact.summary,
+                                    "data": artifact.data,
+                                }
+                            },
+                        )
+                    )
+            except Exception as exc:
+                observation = {
+                    "tool_name": call.name,
+                    "summary": f"Tool {call.name} failed: {exc}",
+                    "error": str(exc),
+                    "data": {},
+                    "artifact_ids": [],
+                    "evidence_ids": [],
+                    "task_ids": [],
+                    "next_suggestions": self._tool_recovery_suggestions(tool_registry, call.name),
+                }
+                events.append(
+                    AgentStreamEvent(
+                        event="tool_result",
+                        data={"tool_name": call.name, "summary": observation["summary"], "error": str(exc)},
+                    )
+                )
+            tool_observations.append(observation)
+            state.observations.append(observation)
+            observation_messages.append({"tool_call_id": call.id, "tool_name": call.name, "observation": observation})
+
+        self._record_agent_step(
+            case_id=state.case_id,
+            step_index=step_index,
+            phase="observe",
+            tool_calls=[{"id": call.id, "name": call.name, "arguments": call.arguments} for call in result.tool_calls],
+            observations=tool_observations,
+            llm_metadata=self._step_llm_metadata(result.metadata),
+            stop_reason=state.stop_reason,
+            duration_ms=duration_ms,
+        )
+        state.messages.extend(self.llm.tool_observation_messages(observation_messages))
+        return ReActStepOutput(events=events, deltas=deltas, final_content=final_content)
 
     def _tool_context(self, state: AgentState) -> ToolContext:
         return ToolContext(

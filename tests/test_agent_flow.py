@@ -140,3 +140,68 @@ def test_agent_selects_plugin_by_case_equipment_type(tmp_path):
     ]
     assert charts
     assert all(generated_root in Path(chart.data["file_path"]).parents for chart in charts)
+
+
+def test_sync_and_stream_react_paths_share_tool_behavior(tmp_path):
+    sync_repository = SQLiteRepository(tmp_path / "sync.sqlite3")
+    stream_repository = SQLiteRepository(tmp_path / "stream.sqlite3")
+    sync_file_store = LocalFileStore(tmp_path / "sync-files")
+    stream_file_store = LocalFileStore(tmp_path / "stream-files")
+
+    sync_case = sync_repository.create_case("Sync diagnostic")
+    stream_case = stream_repository.create_case("Stream diagnostic")
+    sync_dataset = sync_file_store.save_bytes(
+        case_id=sync_case.id,
+        filename="performance.csv",
+        content=CSV_CONTENT,
+        content_type="text/csv",
+    )
+    stream_dataset = stream_file_store.save_bytes(
+        case_id=stream_case.id,
+        filename="performance.csv",
+        content=CSV_CONTENT,
+        content_type="text/csv",
+    )
+    sync_repository.add_dataset(sync_dataset)
+    stream_repository.add_dataset(stream_dataset)
+
+    sync_runtime = AgentRuntime(
+        sync_repository,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(tmp_path / "sync-generated"),
+        plugin=GenericEquipmentPlugin(),
+        calibration_registry=load_demo_calibrations(),
+    )
+    stream_runtime = AgentRuntime(
+        stream_repository,
+        llm=DeterministicLLMProvider(),
+        generated_root=str(tmp_path / "stream-generated"),
+        plugin=GenericEquipmentPlugin(),
+        calibration_registry=load_demo_calibrations(),
+    )
+
+    sync_runtime.handle_user_message(
+        case_id=sync_case.id,
+        content="请诊断这份设备性能数据并给出建议",
+        dataset_id=sync_dataset.id,
+    )
+    stream_events = list(
+        stream_runtime.stream_user_message(
+            case_id=stream_case.id,
+            content="请诊断这份设备性能数据并给出建议",
+            dataset_id=stream_dataset.id,
+        )
+    )
+    wait_for_tasks(sync_runtime)
+    wait_for_tasks(stream_runtime)
+
+    sync_tool_names = [trace.tool_name for trace in sync_repository.list_case_tool_traces(sync_case.id)]
+    stream_tool_names = [trace.tool_name for trace in stream_repository.list_case_tool_traces(stream_case.id)]
+    assert stream_events[-1].event == "final"
+    assert sync_tool_names == stream_tool_names
+    assert [step.phase for step in sync_repository.list_case_agent_step_traces(sync_case.id)] == [
+        step.phase for step in stream_repository.list_case_agent_step_traces(stream_case.id)
+    ]
+    assert {artifact.kind for artifact in sync_repository.list_case_artifacts(sync_case.id)} == {
+        artifact.kind for artifact in stream_repository.list_case_artifacts(stream_case.id)
+    }
